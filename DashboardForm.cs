@@ -540,7 +540,7 @@ sealed class AnimatedProgress : Control
 sealed class AnimatedRadar : Control
 {
     public float Phase { get; set; }
-    public AnimatedRadar() { DoubleBuffered = true; BackColor = Color.Transparent; }
+    public AnimatedRadar() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); DoubleBuffered = true; BackColor = Color.FromArgb(5, 10, 21); }
     protected override void OnPaint(PaintEventArgs e)
     {
         base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; var c = new Point(Width / 2, Height / 2); var radius = Math.Max(20, Math.Min(Width, Height) / 2 - 16); using var grid = new Pen(Color.FromArgb(105, 181, 70, 255), 1.5f); using var cross = new Pen(Color.FromArgb(70, 0, 224, 255), 1);
@@ -557,3 +557,4 @@ sealed class AnimatedSparkline : Control
         base.OnPaint(e); if (Width < 20 || Height < 20) return; e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; using var grid = new Pen(Color.FromArgb(22, 45, 72)); for (var y = 12; y < Height; y += 20) e.Graphics.DrawLine(grid, 0, y, Width, y); if (Values.Count < 2) return; var min = Values.Min(); var max = Values.Max(); var range = Math.Max(1, max - min); var points = Values.Select((v, i) => new Point(8 + i * Math.Max(1, (Width - 16) / Math.Max(1, Values.Count - 1)), Height - 10 - (int)((v - min) / range * Math.Max(10, Height - 24)))).ToArray(); using var line = new Pen(Color.FromArgb(34, 240, 106), 2); e.Graphics.DrawLines(line, points); using var dot = new SolidBrush(Color.FromArgb(34, 240, 106)); foreach (var point in points) e.Graphics.FillEllipse(dot, point.X - 2, point.Y - 2, 5, 5); var pulse = (int)((Math.Sin(Phase * 2) + 1) * 2); var last = points[^1]; using var glow = new SolidBrush(Color.FromArgb(55, 34, 240, 106)); e.Graphics.FillEllipse(glow, last.X - 5 - pulse, last.Y - 5 - pulse, 10 + pulse * 2, 10 + pulse * 2);
     }
 }
+
