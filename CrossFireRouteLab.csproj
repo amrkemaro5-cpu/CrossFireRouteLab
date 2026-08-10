@@ -5,7 +5,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>CrossFireRouteLab</AssemblyName>
+    <AssemblyName>GameRouteLab</AssemblyName>
     <RootNamespace>CrossFireRouteLab</RootNamespace>
   </PropertyGroup>
 </Project>
