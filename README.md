@@ -1,45 +1,64 @@
-# Game Route Lab v3.0
+# Game Route Lab v4.0
 
-Native C#/.NET 8 Windows diagnostic and route-research application for **any online game**. CrossFire is simply the first real-world test case.
+![Game Route Lab](https://raw.githubusercontent.com/amrkemaro5-cpu/CrossFireRouteLab/main/assets/GameRouteLab.svg)
 
-## What is automatic now
-- Detect the active game process and its public network endpoints without manual IP copying.
-- Score endpoint confidence using foreground process, executable path, process name and connection evidence.
-- Detect the local gateway, interface, WAN type and DNS servers.
-- Fingerprint the router web interface for vendor/model/firmware when exposed without login.
-- Enrich the network profile with public IP, ISP, organization and ASN when the optional read-only public-IP lookup is reachable.
-- Test every discovered game endpoint with ICMP when supported, TCP evidence for TCP endpoints, and traceroute route evidence.
-- Correctly treat ICMP-blocked game servers as **unknown ICMP**, not as 100% game packet loss.
-- Rank candidates and explain why the current candidate scored first.
-- Maintain local per-game memory under `%LOCALAPPDATA%\\GameRouteLab`.
-- Extract each game's executable icon and cache a PNG for the Game Memory panel.
-- Remember recent best endpoints and recent route signatures for each game.
-- Save a complete diagnostic report.
+A native Windows diagnostic and route-research application for **any online game**. CrossFire is one test case, not a hard-coded limitation.
 
-## Use
-1. Start an online game and enter a match/session so its real game connections exist.
-2. Open **Game Route Lab**.
-3. Click **AUTO ANALYZE GAME**.
-4. The program detects the game, router, firmware, ISP/ASN and active endpoints itself.
-5. It tests the candidates and shows the current best measured candidate.
-6. Click a game in **GAME MEMORY** to review its previous observations and route signatures.
+## What changed in v4
 
-You do **not** need to copy IP addresses into the program.
+- New dark neon gaming dashboard inspired by the GRL design.
+- GRL logo and application branding.
+- Windows EXE icon generated automatically during CI.
+- Automatic game fingerprinting using process name, executable path, window title, foreground process and connection evidence.
+- Explicit protection against false selection of ChatGPT, Chrome, Edge, Firefox, Discord, Steam helpers and Windows services.
+- Automatic per-game memory with cached game icons.
+- Previous best endpoint, score and route evidence are retained locally.
+- Automatic ISP / organization / ASN / public-IP profiling when available.
+- Automatic router/vendor/model/firmware fingerprinting when exposed by the gateway.
+- Automatic endpoint testing with ping and traceroute evidence.
+- ICMP-blocked servers are treated as **unknown**, not as automatic game packet loss.
+- Read-only operation: no Windows route, DNS, PPPoE, router, firmware or VPN settings are modified.
 
-## Important measurement rule
-Game servers often block ICMP. A result such as `30 sent / 0 received` from `ping.exe` does not prove that the game's TCP/UDP traffic is broken. Game Route Lab therefore combines process/connection evidence, TCP tests where applicable, and route evidence instead of treating ICMP alone as the answer.
+## Quick start
 
-## Safety
-The current application is deliberately **read-only**. It does not change Windows routes, DNS, PPPoE, router settings, firmware, firewall rules, or install/use a VPN.
+1. Start your game.
+2. Enter an online match/session.
+3. Open **GameRouteLab.exe**.
+4. Click **AUTO ANALYZE**.
+5. Wait for the candidate comparison to finish.
+6. Read **CURRENT RESULT** and check the game's icon/profile in **GAME MEMORY**.
 
-The project is intended to establish reliable measurements first. Any future route-selection feature should only act on verified capabilities of the user's actual ISP/router and should never claim that a static route can force an ISP to use an arbitrary upstream path.
+You no longer need to copy IP addresses manually.
+
+## Detailed instructions
+
+See **USER_GUIDE.md** in the package. It explains the steps one by one and explains ICMP timeouts, pathping, game detection and memory storage.
+
+## Game memory
+
+Profiles are stored locally at:
+
+```text
+%LOCALAPPDATA%\GameRouteLab
+```
+
+Each profile can remember the executable, friendly name, icon, number of analyses, previous best endpoint, score and recent route evidence. No router password is stored.
+
+## Measurement philosophy
+
+A game endpoint can block ICMP while still carrying valid game traffic. Therefore the application does not equate `ping = 100% loss` with `game = broken`. It combines process identity, socket evidence and route measurements.
+
+The application is intentionally read-only. A local static route cannot force WE/Telecom Egypt to change its upstream Internet routing. The first objective is to establish reliable measurements from the actual connection before considering any route-selection mechanism.
 
 ## Build
+
 - Windows 10/11
 - .NET 8 SDK
+- Python 3 + Pillow are used **only by GitHub Actions** to generate the EXE icon.
 
-`dotnet restore CrossFireRouteLab.csproj`
+```text
+dotnet restore CrossFireRouteLab.csproj
+dotnet build CrossFireRouteLab.csproj -c Release
+```
 
-`dotnet build CrossFireRouteLab.csproj -c Release`
-
-The CI workflow also publishes a self-contained Windows x64 executable named `GameRouteLab.exe` and uploads a `GameRouteLab-Windows-x64` artifact.
+The GitHub workflow publishes a self-contained Windows x64 `GameRouteLab.exe`, includes the GRL icon and packages `README.md`, `USER_GUIDE.md` and `GameRouteLab.ico`.
