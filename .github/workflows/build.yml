@@ -29,17 +29,19 @@ jobs:
       - name: Publish self-contained Windows x64
         run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish
 
-      - name: Package
+      - name: Prepare package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item publish\CrossFireRouteLab.exe package\CrossFireRouteLab.exe
           Copy-Item README.md package\README.md
-          Compress-Archive -Path package\* -DestinationPath CrossFireRouteLab-Windows-x64.zip -Force
 
-      - name: Upload Windows ZIP
+      # GitHub automatically creates the downloadable ZIP for an artifact.
+      # Upload the package directory directly so users do not get a ZIP inside another ZIP.
+      - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: CrossFireRouteLab-Windows-x64
-          path: CrossFireRouteLab-Windows-x64.zip
+          path: package
           if-no-files-found: error
+          compression-level: 6
