@@ -37,17 +37,35 @@ jobs:
       - name: Build
         run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore
 
-      - name: Publish self-contained Windows x64
-        run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish
+      # Reliability first: do NOT use a single-file bundle here.
+      # A normal self-contained folder avoids single-file extraction failures
+      # caused by TEMP permissions, antivirus locking, or runtime extraction.
+      - name: Publish reliable Windows x64 folder
+        run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -o publish
 
       - name: Prepare package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
-          Copy-Item publish\GameRouteLab.exe package\GameRouteLab.exe
-          Copy-Item README.md package\README.md
-          Copy-Item USER_GUIDE.md package\USER_GUIDE.md
-          Copy-Item assets\GameRouteLab.ico package\GameRouteLab.ico
+          Copy-Item publish\* package\ -Recurse -Force
+          Copy-Item README.md package\README.md -Force
+          Copy-Item USER_GUIDE.md package\USER_GUIDE.md -Force
+          Copy-Item assets\GameRouteLab.ico package\GameRouteLab.ico -Force
+          if (-not (Test-Path package\GameRouteLab.exe)) { throw 'GameRouteLab.exe was not produced.' }
+          if (-not (Test-Path package\GameRouteLab.runtimeconfig.json)) { throw 'Runtime config was not produced.' }
+          if (-not (Test-Path package\GameRouteLab.deps.json)) { throw 'Dependency manifest was not produced.' }
+          Get-ChildItem package | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Smoke-check published application files
+        shell: pwsh
+        run: |
+          $exe = Get-Item package\GameRouteLab.exe
+          if ($exe.Length -lt 100KB) { throw 'Published executable is unexpectedly small.' }
+          $runtime = Get-Content package\GameRouteLab.runtimeconfig.json -Raw | ConvertFrom-Json
+          if (-not $runtime.runtimeOptions.tfm) { throw 'Runtime config is missing a target framework.' }
+          Write-Host "Executable: $($exe.Length) bytes"
+          Write-Host "Target framework: $($runtime.runtimeOptions.tfm)"
+          Write-Host "Publish mode: self-contained folder"
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
