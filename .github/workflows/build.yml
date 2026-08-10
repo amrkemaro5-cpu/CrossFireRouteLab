@@ -68,6 +68,7 @@ jobs:
           </Project>
           '@.Replace('__ROOT__', $env:GITHUB_WORKSPACE) | Set-Content (Join-Path $testDir 'Smoke.csproj') -Encoding UTF8
           @'
+          using System;
           using CrossFireRouteLab;
           using System.Windows.Forms;
 
