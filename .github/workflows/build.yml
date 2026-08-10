@@ -31,7 +31,7 @@ jobs:
           $path = 'DashboardForm.cs'
           $text = Get-Content $path -Raw
           $old = 'public AnimatedRadar() { DoubleBuffered = true; BackColor = Color.Transparent; }'
-          $new = 'public AnimatedRadar() { SetStyle(ControlStyles.UserPaint -bor ControlStyles.AllPaintingInWmPaint -bor ControlStyles.OptimizedDoubleBuffer, true); DoubleBuffered = true; BackColor = Color.FromArgb(5, 10, 21); }'
+          $new = 'public AnimatedRadar() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); DoubleBuffered = true; BackColor = Color.FromArgb(5, 10, 21); }'
           if (-not $text.Contains($old)) { throw 'Expected AnimatedRadar constructor was not found; refusing to build an unverified UI.' }
           $text = $text.Replace($old, $new)
           Set-Content -Path $path -Value $text -Encoding UTF8
