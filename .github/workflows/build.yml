@@ -72,9 +72,9 @@ jobs:
           using CrossFireRouteLab;
           using System.Windows.Forms;
 
-          [STAThread]
           static class Smoke
           {
+              [STAThread]
               static void Main()
               {
                   ApplicationConfiguration.Initialize();
