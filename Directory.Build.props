@@ -1,8 +1,5 @@
 <Project>
   <PropertyGroup>
-    <StartupObject>CrossFireRouteLab.ProgramV7</StartupObject>
+    <StartupObject>CrossFireRouteLab.Program</StartupObject>
   </PropertyGroup>
-  <ItemGroup>
-    <Compile Remove="Program.cs" />
-  </ItemGroup>
 </Project>
