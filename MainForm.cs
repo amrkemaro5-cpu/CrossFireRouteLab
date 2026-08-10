@@ -1,9 +1,6 @@
 using System.Diagnostics;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Net;
+using System.Drawing.Drawing2D;
 using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -11,333 +8,50 @@ namespace CrossFireRouteLab;
 
 public sealed class MainForm : Form
 {
-    readonly TextBox target = new();
-    readonly Label status = new();
-    readonly Label networkLabel = new();
-    readonly RichTextBox log = new();
-    readonly ListView games = new();
-    readonly ImageList gameImages = new();
-    readonly List<Button> buttons = new();
-    readonly List<GameProfile> memory = new();
-    bool busy;
+    static readonly Color Bg=Color.FromArgb(5,8,17), Panel=Color.FromArgb(9,15,29), Panel2=Color.FromArgb(12,20,38), Border=Color.FromArgb(35,57,88), Cyan=Color.FromArgb(0,220,255), Purple=Color.FromArgb(177,77,255), Green=Color.FromArgb(40,235,110), Txt=Color.FromArgb(225,235,248), Muted=Color.FromArgb(135,155,180);
+    readonly TextBox target=new(); readonly RichTextBox log=new(); readonly Label status=new(), network=new(), active=new(), best=new(); readonly FlowLayoutPanel memoryPanel=new(); readonly List<Button> buttons=new(); readonly List<GameProfile> memory=new(); Icon? appIcon; bool busy;
 
-    public MainForm()
-    {
-        Text = "Game Route Lab";
-        Width = 1400; Height = 900; MinimumSize = new Size(1120, 720);
-        StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Color.FromArgb(242, 245, 248);
+    public MainForm(){ Text="Game Route Lab"; Width=1500; Height=940; MinimumSize=new Size(1200,760); StartPosition=FormStartPosition.CenterScreen; BackColor=Bg; ForeColor=Txt; Font=new Font("Segoe UI",9.5f); appIcon=Brand.CreateIcon(); Icon=appIcon; BuildUi(); memory.AddRange(GameProfileStore.Load()); RefreshMemory(); L("GAME ROUTE LAB v4.0"); L("Smart game detection • ISP • router • endpoint • route analysis • local game memory"); L("READ-ONLY: no routes, DNS, PPPoE, router settings or firmware are changed."); }
 
-        var header = new Panel { Dock = DockStyle.Top, Height = 88, Padding = new Padding(16), BackColor = Color.White };
-        header.Controls.Add(new Label { Text = "GAME ROUTE LAB", AutoSize = true, Font = new Font("Segoe UI", 22, FontStyle.Bold), Location = new Point(16, 7) });
-        header.Controls.Add(new Label { Text = "Automatic game • ISP • router • endpoint • path analysis  |  READ-ONLY", AutoSize = true, ForeColor = Color.Teal, Location = new Point(18, 50) });
-        networkLabel.AutoSize = true; networkLabel.ForeColor = Color.DimGray; networkLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right; networkLabel.Location = new Point(760, 20); networkLabel.Text = "Network: not scanned"; header.Controls.Add(networkLabel);
-        Controls.Add(header);
-
-        var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 122, Padding = new Padding(12), BackColor = Color.White, WrapContents = true, AutoScroll = true };
-        target.Width = 220; target.PlaceholderText = "Optional IP / hostname";
-        top.Controls.Add(new Label { Text = "Manual endpoint:", AutoSize = true, Padding = new Padding(0, 9, 4, 0) }); top.Controls.Add(target);
-        AddButton(top, "AUTO ANALYZE GAME", AutoAnalyze);
-        AddButton(top, "Refresh Games", DetectGames);
-        AddButton(top, "Detect Network", DetectNetwork);
-        AddButton(top, "Detect Router", DetectRouter);
-        AddButton(top, "Find Connections", Connections);
-        AddButton(top, "Route Table", Routes);
-        AddButton(top, "Ping 30x", Ping);
-        AddButton(top, "Traceroute", Trace);
-        AddButton(top, "Path Quality", Path);
-        AddButton(top, "Save Report", SaveReport);
-        Controls.Add(top);
-
-        var split = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 310, FixedPanel = FixedPanel.Panel1, BackColor = Color.FromArgb(225, 231, 237) };
-        split.Panel1.Padding = new Padding(10);
-        var leftTitle = new Label { Text = "GAME MEMORY", Dock = DockStyle.Top, Height = 32, Font = new Font("Segoe UI", 12, FontStyle.Bold), ForeColor = Color.FromArgb(30, 45, 60) };
-        split.Panel1.Controls.Add(leftTitle);
-        gameImages.ColorDepth = ColorDepth.Depth32Bit; gameImages.ImageSize = new Size(64, 64);
-        games.Dock = DockStyle.Fill; games.View = View.LargeIcon; games.LargeImageList = gameImages; games.MultiSelect = false; games.HideSelection = false; games.BackColor = Color.FromArgb(248, 250, 252); games.BorderStyle = BorderStyle.None;
-        games.SelectedIndexChanged += (_, _) => ShowSelectedMemory();
-        split.Panel1.Controls.Add(games);
-
-        var right = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
-        status.Text = "READY • READ-ONLY"; status.AutoSize = true; status.ForeColor = Color.DarkGreen; status.Dock = DockStyle.Top; status.Height = 30; right.Controls.Add(status);
-        log.Dock = DockStyle.Fill; log.ReadOnly = true; log.WordWrap = false; log.BackColor = Color.FromArgb(18, 22, 27); log.ForeColor = Color.FromArgb(225, 232, 240); log.Font = new Font("Consolas", 10); right.Controls.Add(log);
-        split.Panel2.Controls.Add(right);
-        Controls.Add(split);
-
-        memory.AddRange(GameProfileStore.Load());
-        RefreshMemoryList();
-        L("============================================================");
-        L("GAME ROUTE LAB v3.0");
-        L("============================================================");
-        L("No IP copying is required. The analyzer discovers the active game's process and connections itself.");
-        L("Local game memory is stored under %LOCALAPPDATA%\\GameRouteLab. It contains no router password.");
-        L("The analyzer never changes Windows routes, DNS, PPPoE, router settings, firmware, or uses a VPN.");
-        L("");
+    void BuildUi(){
+        var root=new TableLayoutPanel{Dock=DockStyle.Fill,RowCount=3,ColumnCount=1,BackColor=Bg}; root.RowStyles.Add(new RowStyle(SizeType.Absolute,116)); root.RowStyles.Add(new RowStyle(SizeType.Absolute,72)); root.RowStyles.Add(new RowStyle(SizeType.Percent,100)); Controls.Add(root);
+        var h=new Panel{Dock=DockStyle.Fill,BackColor=Color.FromArgb(3,6,14),Padding=new Padding(18)}; h.Paint+=PaintHeader; h.Controls.Add(new PictureBox{Size=new Size(88,88),Location=new Point(18,12),Image=Brand.CreateLogo(84),BackColor=Color.Transparent}); h.Controls.Add(new Label{Text="GAME ROUTE LAB",AutoSize=true,Location=new Point(118,18),Font=new Font("Segoe UI Semibold",26,FontStyle.Bold),ForeColor=Color.White}); h.Controls.Add(new Label{Text="SMARTER ROUTES.  BETTER PING.",AutoSize=true,Location=new Point(120,62),ForeColor=Cyan,Font=new Font("Segoe UI Semibold",10.5f)}); network.Text="NETWORK: NOT SCANNED"; network.AutoSize=true; network.Anchor=AnchorStyles.Top|AnchorStyles.Right; network.Location=new Point(1060,26); network.ForeColor=Muted; status.Text="● READY • READ-ONLY"; status.AutoSize=true; status.Anchor=AnchorStyles.Top|AnchorStyles.Right; status.Location=new Point(1060,60); status.ForeColor=Green; h.Controls.Add(network); h.Controls.Add(status); root.Controls.Add(h,0,0);
+        var bar=new FlowLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(12,10,12,10),BackColor=Color.FromArgb(7,12,24),WrapContents=false,AutoScroll=true}; target.Width=190; target.BackColor=Panel2; target.ForeColor=Txt; target.BorderStyle=BorderStyle.FixedSingle; target.PlaceholderText="Optional IP / hostname"; bar.Controls.Add(new Label{Text="ENDPOINT",AutoSize=true,ForeColor=Muted,Padding=new Padding(3,9,3,0)}); bar.Controls.Add(target); AddButton(bar,"◎  AUTO ANALYZE",AutoAnalyze); AddButton(bar,"↻  REFRESH GAMES",DetectGames); AddButton(bar,"⌁  NETWORK",DetectNetwork); AddButton(bar,"▣  ROUTER",DetectRouter); AddButton(bar,"⌕  CONNECTIONS",Connections); AddButton(bar,"⌁  ROUTE TABLE",Routes); AddButton(bar,"◉  PING 30x",Ping); AddButton(bar,"⇢  TRACEROUTE",Trace); AddButton(bar,"▥  PATH QUALITY",Path); AddButton(bar,"▤  SAVE REPORT",SaveReport); root.Controls.Add(bar,0,1);
+        var body=new TableLayoutPanel{Dock=DockStyle.Fill,Padding=new Padding(12,8,12,12),BackColor=Bg,ColumnCount=3}; body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,250)); body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100)); body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,300)); root.Controls.Add(body,0,2);
+        var left=Card(); left.Controls.Add(new Label{Text="GAME MEMORY",Dock=DockStyle.Top,Height=38,Padding=new Padding(14,11,0,0),ForeColor=Purple,Font=new Font("Segoe UI Semibold",11,FontStyle.Bold)}); memoryPanel.Dock=DockStyle.Fill; memoryPanel.FlowDirection=FlowDirection.TopDown; memoryPanel.WrapContents=false; memoryPanel.AutoScroll=true; memoryPanel.Padding=new Padding(8); left.Controls.Add(memoryPanel); body.Controls.Add(left,0,0);
+        var center=new TableLayoutPanel{Dock=DockStyle.Fill,BackColor=Bg,RowCount=3}; center.RowStyles.Add(new RowStyle(SizeType.Absolute,155)); center.RowStyles.Add(new RowStyle(SizeType.Absolute,170)); center.RowStyles.Add(new RowStyle(SizeType.Percent,100)); body.Controls.Add(center,1,0);
+        var hero=Card(); hero.Controls.Add(new Label{Text="AUTO ANALYSIS",Location=new Point(18,15),AutoSize=true,ForeColor=Purple,Font=new Font("Segoe UI Semibold",16,FontStyle.Bold)}); active.Text="No game selected"; active.Location=new Point(20,52); active.AutoSize=true; active.Font=new Font("Segoe UI Semibold",13); hero.Controls.Add(active); hero.Controls.Add(new Label{Text="Detects the game, finds public connections, fingerprints the network and ranks route evidence automatically.",Location=new Point(20,82),AutoSize=false,Width=720,Height=40,ForeColor=Muted}); center.Controls.Add(hero,0,0);
+        var result=Card(); result.Controls.Add(new Label{Text="CURRENT RESULT",Location=new Point(18,12),AutoSize=true,ForeColor=Cyan,Font=new Font("Segoe UI Semibold",11,FontStyle.Bold)}); best.Text="Waiting for analysis…"; best.Location=new Point(20,45); best.AutoSize=false; best.Width=780; best.Height=110; best.Font=new Font("Segoe UI Semibold",14); result.Controls.Add(best); center.Controls.Add(result,0,1);
+        var console=Card(); console.Controls.Add(new Label{Text="LIVE ANALYSIS CONSOLE",Location=new Point(18,12),AutoSize=true,ForeColor=Cyan,Font=new Font("Segoe UI Semibold",11,FontStyle.Bold)}); log.Dock=DockStyle.Fill; log.Margin=new Padding(14,42,14,12); log.BackColor=Color.FromArgb(3,7,14); log.ForeColor=Txt; log.BorderStyle=BorderStyle.None; log.Font=new Font("Cascadia Mono",9.5f); log.WordWrap=false; log.ReadOnly=true; console.Controls.Add(log); center.Controls.Add(console,0,2);
+        var right=new TableLayoutPanel{Dock=DockStyle.Fill,BackColor=Bg,RowCount=3}; right.RowStyles.Add(new RowStyle(SizeType.Absolute,205)); right.RowStyles.Add(new RowStyle(SizeType.Absolute,205)); right.RowStyles.Add(new RowStyle(SizeType.Percent,100)); right.Controls.Add(InfoCard("NETWORK INFORMATION","ISP / organization / ASN / public IP / gateway / DNS",Cyan),0,0); right.Controls.Add(InfoCard("ROUTER INTELLIGENCE","Vendor / model / firmware / management interface",Purple),0,1); right.Controls.Add(InfoCard("ANALYZER TIPS","Run inside an online match. More observations improve each game's local memory.",Green),0,2); body.Controls.Add(right,2,0);
     }
+    Panel Card(){var p=new Panel{Dock=DockStyle.Fill,BackColor=Panel,Margin=new Padding(0,0,0,8),Padding=new Padding(12)}; p.Paint+=PaintCard; return p;}
+    Panel InfoCard(string title,string text,Color accent){var p=Card(); p.Controls.Add(new Label{Text=title,Location=new Point(14,12),AutoSize=true,ForeColor=accent,Font=new Font("Segoe UI Semibold",11,FontStyle.Bold)}); p.Controls.Add(new Label{Text=text,Location=new Point(14,47),AutoSize=false,Width=260,Height=120,ForeColor=Muted}); return p;}
+    void AddButton(Control c,string text,Func<Task> action){var b=new Button{Text=text,AutoSize=true,Height=40,FlatStyle=FlatStyle.Flat,BackColor=Panel2,ForeColor=Txt,Margin=new Padding(4)}; b.FlatAppearance.BorderColor=Border; b.FlatAppearance.MouseOverBackColor=Color.FromArgb(24,35,60); b.Click+=async(_,_)=>await Safe(action); buttons.Add(b); c.Controls.Add(b);}
+    void PaintHeader(object? s,PaintEventArgs e){using var b=new LinearGradientBrush(new Rectangle(0,0,e.ClipRectangle.Width,6),Purple,Cyan,LinearGradientMode.Horizontal); e.Graphics.FillRectangle(b,0,e.ClipRectangle.Bottom-5,e.ClipRectangle.Width,5);}
+    void PaintCard(object? s,PaintEventArgs e){var r=((Control)s!).ClientRectangle;r.Width--;r.Height--;using var p=new Pen(Border);e.Graphics.DrawRectangle(p,r);}
+    void L(string s){if(InvokeRequired){BeginInvoke(()=>L(s));return;}log.AppendText(s+Environment.NewLine);log.SelectionStart=log.TextLength;log.ScrollToCaret();}
+    async Task Safe(Func<Task> f){if(busy)return;busy=true;foreach(var b in buttons)b.Enabled=false;status.Text="● ANALYZING…";status.ForeColor=Color.Gold;try{await f();}catch(Exception e){L("[ERROR] "+e.Message);status.Text="● ERROR • SEE CONSOLE";status.ForeColor=Color.OrangeRed;}finally{busy=false;foreach(var b in buttons)b.Enabled=true;if(!status.Text.StartsWith("● ERROR")){status.Text="● READY • READ-ONLY";status.ForeColor=Green;}}}
 
-    void AddButton(Control c, string text, Func<Task> action)
-    {
-        var b = new Button { Text = text, AutoSize = true, Height = 34, Margin = new Padding(4) };
-        b.Click += async (_, _) => await Safe(action); buttons.Add(b); c.Controls.Add(b);
-    }
+    void RefreshMemory(){memoryPanel.SuspendLayout();memoryPanel.Controls.Clear();foreach(var p in memory.OrderByDescending(x=>x.LastSeenUtc)){var c=new Panel{Width=220,Height=76,BackColor=Panel2,Margin=new Padding(0,0,0,8),Cursor=Cursors.Hand};c.Paint+=(_,e)=>{using var pen=new Pen(p.LastScore>=70?Green:Border);e.Graphics.DrawRectangle(pen,0,0,c.Width-1,c.Height-1);};var img=new PictureBox{Size=new Size(54,54),Location=new Point(10,10),SizeMode=PictureBoxSizeMode.Zoom,BackColor=Color.FromArgb(2,5,11)};try{img.Image=File.Exists(p.IconPath)?Image.FromFile(p.IconPath):Brand.CreateLogo(50);}catch{img.Image=Brand.CreateLogo(50);}var n=new Label{Text=p.DisplayName,Location=new Point(72,9),AutoSize=false,Width=135,Height=23,ForeColor=Txt,Font=new Font("Segoe UI Semibold",10,FontStyle.Bold)};var i=new Label{Text=p.Observations+" analyses\n"+(string.IsNullOrWhiteSpace(p.LastBestEndpoint)?"No result yet":"Best: "+p.LastBestEndpoint),Location=new Point(72,32),AutoSize=false,Width=135,Height=38,ForeColor=p.LastScore>=70?Green:Muted};c.Controls.Add(img);c.Controls.Add(n);c.Controls.Add(i);c.Click+=(_,_)=>SelectProfile(p);img.Click+=(_,_)=>SelectProfile(p);n.Click+=(_,_)=>SelectProfile(p);i.Click+=(_,_)=>SelectProfile(p);memoryPanel.Controls.Add(c);}if(memory.Count==0)memoryPanel.Controls.Add(new Label{Text="No games remembered yet.\n\nStart a game and click\nAUTO ANALYZE.",ForeColor=Muted,AutoSize=true,Padding=new Padding(8)});memoryPanel.ResumeLayout();}
+    void SelectProfile(GameProfile p){active.Text=$"{p.DisplayName}  •  {p.Observations} saved analyses";best.Text=string.IsNullOrWhiteSpace(p.LastBestEndpoint)?"No route result stored yet.":$"LAST BEST\n{p.LastBestEndpoint}   |   score {p.LastScore:0}/100\nLast scan: {p.LastSeenUtc.ToLocalTime():g}";L($"\n[MEMORY] {p.DisplayName}\nExecutable: {p.ExecutablePath}\nObservations: {p.Observations}\nLast best: {p.LastBestEndpoint}");}
+    void Upsert(GameProfile p){var n=memory.FindIndex(x=>x.Key==p.Key);if(n>=0)memory[n]=p;else memory.Add(p);}
 
-    void L(string s)
-    {
-        if (InvokeRequired) { BeginInvoke(() => L(s)); return; }
-        log.AppendText(s + Environment.NewLine); log.SelectionStart = log.TextLength; log.ScrollToCaret();
-    }
+    async Task DetectGames(){L("\n=== ANY-GAME DISCOVERY ===");var items=await GameScanner.DiscoverAsync();var groups=items.Where(x=>x.LikelyGame).GroupBy(x=>new{x.Pid,x.ProcessName,x.ExecutablePath}).ToList();if(groups.Count==0){L("No high-confidence game process found. Start an online game and try again.");return;}foreach(var g in groups){var p=GameProfileStore.Touch(g.Key.ProcessName,g.Key.ExecutablePath);Upsert(p);L($"GAME {p.DisplayName} PID={g.Key.Pid} endpoints={g.Count()} confidence={g.Max(x=>x.Confidence)}%");}RefreshMemory();}
+    async Task AutoAnalyze(){L("\n============================================================\nAUTO ANALYSIS STARTED\n============================================================");var r=await RouterDetector.DetectAsync();var n=await NetworkProfileDetector.DetectAsync();network.Text=$"ISP: {n.ISP} | ASN: {n.ASN} | ROUTER: {r.Model}";L($"NETWORK: {n.ISP} | {n.Organization} | ASN {n.ASN} | Public {n.PublicIp} | GW {n.Gateway}");L($"ROUTER: {r.Vendor} {r.Model} | FW {r.Firmware} | confidence {r.Confidence}");var all=await GameScanner.DiscoverAsync();var game=all.Where(x=>x.LikelyGame).OrderByDescending(x=>x.Confidence).FirstOrDefault();if(game==null){active.Text="No game detected";best.Text="Start an online game first, then run AUTO ANALYZE again.";L("STOP: no high-confidence game was detected. The analyzer will not guess ChatGPT, Chrome, Discord or another normal application as a game.");return;}var p=GameProfileStore.Touch(game.ProcessName,game.ExecutablePath);Upsert(p);RefreshMemory();active.Text=$"{p.DisplayName} • PID {game.Pid} • confidence {game.Confidence}%";L($"GAME: {p.DisplayName} | PID {game.Pid} | {p.ExecutablePath}");var candidates=all.Where(x=>x.Pid==game.Pid&&x.LikelyGame).GroupBy(x=>$"{x.RemoteIp}:{x.RemotePort}/{x.Protocol}").Select(g=>g.First()).Take(10).ToList();if(candidates.Count==0){L("Game process detected, but no public game sockets are visible. Enter an online match and retry.");return;}L($"FOUND {candidates.Count} candidate game endpoint(s). Testing automatically — no IP copying required.");var results=new List<(GameEndpoint E,double Score,string Evidence)>();foreach(var e in candidates){var probe=await PingProbe(e.RemoteIp);var tr=await Cmd("tracert.exe",$"-d -h 18 -w 500 {e.RemoteIp}",25000);var(hops,last)=ParseTrace(tr);var score=Score(e,probe,hops,last);var ev=$"ICMP {probe.Text}; hops {hops}; last RTT {last:0.0} ms";results.Add((e,score,ev));L($"{e.RemoteIp}:{e.RemotePort} {e.Protocol} -> score {score:0}/100 | {ev}");}var bestResult=results.OrderByDescending(x=>x.Score).First();GameProfileStore.Record(p,$"{bestResult.E.RemoteIp}:{bestResult.E.RemotePort}",bestResult.Score,bestResult.Evidence);p=GameProfileStore.Load().FirstOrDefault(x=>x.Key==p.Key)??p;Upsert(p);RefreshMemory();best.Text=$"BEST CURRENT ENDPOINT\n{bestResult.E.RemoteIp}:{bestResult.E.RemotePort}  {bestResult.E.Protocol}\nScore {bestResult.Score:0}/100 • {bestResult.Evidence}";L($"BEST: {bestResult.E.RemoteIp}:{bestResult.E.RemotePort} ({bestResult.E.Protocol}) | score {bestResult.Score:0}/100");L("ICMP timeout is treated as unknown/blocked, not automatic game packet loss. No routing settings were changed.");}
+    async Task<Probe> PingProbe(string ip){using var p=new Ping();var v=new List<long>();for(int i=0;i<5;i++){try{var x=await p.SendPingAsync(ip,800);if(x.Status==IPStatus.Success)v.Add(x.RoundtripTime);}catch{}}return v.Count==0?new Probe(0,"blocked / no response"):new Probe(v.Average(),$"{v.Average():0}ms avg, {5-v.Count}/5 lost");}
+    readonly record struct Probe(double Avg,string Text);
+    static double Score(GameEndpoint e,Probe p,int hops,double last){double s=e.Confidence*.35;if(p.Avg>0)s+=Math.Max(0,40-Math.Min(40,p.Avg*.45));else s+=18;if(last>0)s+=Math.Max(0,18-Math.Min(18,last*.2));if(hops>0)s+=Math.Max(0,7-Math.Min(7,hops*.18));return Math.Clamp(s,0,100);}
+    static(int Hops,double Last)ParseTrace(string t){int h=0;double last=0;foreach(var line in t.Split('\n')){var m=Regex.Match(line.Trim(),@"^(\d+)\s+(.*)$");if(!m.Success)continue;var ts=Regex.Matches(m.Groups[2].Value,@"<?(\d+)\s*ms").Cast<Match>().Select(x=>double.Parse(x.Groups[1].Value)).ToList();if(ts.Count>0){h++;last=ts.Average();}}return(h,last);}
 
-    async Task Safe(Func<Task> f)
-    {
-        if (busy) return; busy = true; foreach (var b in buttons) b.Enabled = false; status.Text = "ANALYZING..."; status.ForeColor = Color.DarkOrange;
-        try { await f(); } catch (Exception e) { L("[ERROR] " + e.Message); } finally { busy = false; foreach (var b in buttons) b.Enabled = true; status.Text = "READY • READ-ONLY"; status.ForeColor = Color.DarkGreen; }
-    }
-
-    async Task<string> Cmd(string file, string args, int timeout = 60000)
-    {
-        using var p = Process.Start(new ProcessStartInfo(file, args) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = Encoding.UTF8 }) ?? throw new Exception("Could not start " + file);
-        var o = p.StandardOutput.ReadToEndAsync(); var e = p.StandardError.ReadToEndAsync();
-        using var c = new CancellationTokenSource(timeout);
-        try { await p.WaitForExitAsync(c.Token); } catch { try { p.Kill(true); } catch { } return (await o) + "\nTIMEOUT\n" + (await e); }
-        var err = await e;
-        return (await o) + (string.IsNullOrWhiteSpace(err) ? "" : "\n" + err);
-    }
-
-    async Task DetectNetwork()
-    {
-        L("\n=== AUTOMATIC NETWORK / ISP PROFILE ===");
-        var n = await NetworkProfileDetector.DetectAsync();
-        networkLabel.Text = $"ISP: {n.ISP}  |  ASN: {n.ASN}  |  Router GW: {n.Gateway}";
-        L($"Interface:      {n.InterfaceName}"); L($"Local IP:       {n.LocalIp}"); L($"Gateway:        {n.Gateway}"); L($"WAN type:       {n.WanType}");
-        L($"Public IP:      {n.PublicIp}"); L($"ISP:            {n.ISP}"); L($"Organization:   {n.Organization}"); L($"ASN:            {n.ASN}"); L($"Location:       {n.City}, {n.Country}"); L($"DNS:            {n.DnsServers}"); L($"Note:           {n.Notes}");
-    }
-
-    async Task DetectRouter()
-    {
-        L("\n=== AUTOMATIC ROUTER FINGERPRINT ===");
-        var r = await RouterDetector.DetectAsync();
-        L($"Gateway:        {r.Gateway}"); L($"Vendor:         {r.Vendor}"); L($"Model:          {r.Model}"); L($"Firmware:       {r.Firmware}"); L($"Management UI:  {r.ManagementUrl}"); L($"Confidence:     {r.Confidence}"); L($"Notes:          {r.Notes}");
-    }
-
-    async Task DetectGames()
-    {
-        L("\n=== AUTOMATIC ANY-GAME DISCOVERY ===");
-        var items = await GameScanner.DiscoverAsync();
-        var groups = items.Where(x => x.LikelyGame).GroupBy(x => new { x.Pid, x.ProcessName, x.ExecutablePath }).ToList();
-        if (groups.Count == 0) { L("No high-confidence game process found. Start an online game and try again."); return; }
-        foreach (var g in groups)
-        {
-            var p = GameProfileStore.Touch(g.Key.ProcessName, g.Key.ExecutablePath);
-            UpsertMemory(p);
-            L($"GAME  {g.Key.ProcessName}  PID={g.Key.Pid}  connections={g.Count()}  confidence={g.Max(x => x.Confidence)}%");
-        }
-        RefreshMemoryList();
-        L($"Discovered {groups.Count} game process(es). Icons are extracted from the game's executable and cached as PNG files.");
-    }
-
-    async Task AutoAnalyze()
-    {
-        L("\n============================================================"); L("AUTO GAME ROUTE ANALYSIS"); L("============================================================");
-        L("1/5  Detecting router, firmware and local network...");
-        var router = await RouterDetector.DetectAsync();
-        var network = await NetworkProfileDetector.DetectAsync();
-        networkLabel.Text = $"ISP: {network.ISP}  |  ASN: {network.ASN}  |  Router: {router.Model}";
-        L($"Router: {router.Vendor} {router.Model} | Firmware: {router.Firmware} | Gateway: {router.Gateway}");
-        L($"ISP: {network.ISP} | Org: {network.Organization} | ASN: {network.ASN} | Public IP: {network.PublicIp}");
-
-        L("\n2/5  Detecting the active game automatically...");
-        var endpoints = await GameScanner.DiscoverAsync();
-        if (endpoints.Count == 0) { L("No public active connections found. Start an online game first."); return; }
-        var foregroundPid = GameScanner.GetForegroundPid();
-        var gameEndpoints = endpoints.Where(x => x.LikelyGame).ToList();
-        if (gameEndpoints.Count == 0) gameEndpoints = endpoints.Take(12).ToList();
-        var selected = gameEndpoints.Where(x => x.Pid == foregroundPid).ToList();
-        if (selected.Count == 0) selected = gameEndpoints.GroupBy(x => x.Pid).OrderByDescending(g => g.Max(x => x.Confidence)).First().ToList();
-        var game = selected.First();
-        var profile = GameProfileStore.Touch(game.ProcessName, game.ExecutablePath); UpsertMemory(profile); RefreshMemoryList();
-        L($"Selected game: {game.ProcessName} (PID {game.Pid})");
-        L($"Memory: {profile.Observations} previous analyses | Last best: {profile.LastBestEndpoint}");
-        L($"Connections discovered for this game: {selected.Count}");
-        foreach (var x in selected) L($"  {x.Protocol} {x.RemoteIp}:{x.RemotePort} | confidence={x.Confidence}% | {x.State}");
-
-        L("\n3/5  Testing every discovered game endpoint automatically...");
-        var results = new List<CandidateResult>();
-        foreach (var e in selected.Take(12))
-        {
-            var ping = await PingQuick(e.RemoteIp);
-            var tcp = e.Protocol == "TCP" && e.RemotePort > 0 ? await TcpQuick(e.RemoteIp, e.RemotePort) : new TcpProbe(0, 0, 0, "UDP endpoint / no TCP probe");
-            var traceText = await Cmd("tracert.exe", $"-d -h 20 -w 600 {e.RemoteIp}", 30000);
-            var trace = ParseTrace(traceText);
-            var score = Score(e, ping, tcp, trace);
-            results.Add(new CandidateResult(e, ping, tcp, trace, score));
-            L($"\n[{e.RemoteIp}:{e.RemotePort}] {e.Protocol}");
-            L($"  ICMP: {ping.Description}");
-            L($"  TCP:  {tcp.Description}");
-            L($"  Route: {trace.Hops} responding hops; destination/last RTT {trace.LastRttMs:0.0} ms");
-            L($"  Score: {score:0}/100");
-        }
-
-        L("\n4/5  Comparing endpoints and route evidence...");
-        foreach (var r in results.OrderByDescending(x => x.Score)) L($"  {r.Score,3:0}/100  {r.Endpoint.RemoteIp}:{r.Endpoint.RemotePort}  {r.Endpoint.Protocol}");
-        var best = results.OrderByDescending(x => x.Score).First();
-        target.Text = best.Endpoint.RemoteIp;
-        var pathSignature = best.Trace.Signature;
-        GameProfileStore.Record(profile, $"{best.Endpoint.RemoteIp}:{best.Endpoint.RemotePort}", best.Score, pathSignature);
-        L("\n5/5  Updating this game's local memory...");
-        L($"Best current candidate: {best.Endpoint.RemoteIp}:{best.Endpoint.RemotePort}");
-        L($"Score: {best.Score:0}/100 | Confidence: {ConfidenceText(best)}");
-        L(Explain(best));
-        L("\nNo route, DNS, router, firmware, or VPN settings were changed.");
-        RefreshMemoryList();
-    }
-
-    sealed record Probe(double AvgMs, double MinMs, double MaxMs, int Received, int Sent, string Description);
-    sealed record TcpProbe(double AvgMs, int Successes, int Attempts, string Description);
-    sealed record TraceProbe(int Hops, double LastRttMs, string Signature, string Raw);
-    sealed record CandidateResult(GameEndpoint Endpoint, Probe Ping, TcpProbe Tcp, TraceProbe Trace, double Score);
-
-    async Task<Probe> PingQuick(string ip)
-    {
-        using var p = new Ping(); var v = new List<long>(); const int sent = 6;
-        for (var i = 0; i < sent; i++) { try { var r = await p.SendPingAsync(ip, 900); if (r.Status == IPStatus.Success) v.Add(r.RoundtripTime); } catch { } }
-        if (v.Count == 0) return new Probe(0, 0, 0, 0, sent, "BLOCKED / NO ICMP RESPONSE (not proof of game loss)");
-        return new Probe(v.Average(), v.Min(), v.Max(), v.Count, sent, $"{v.Average():0.0} ms avg, {sent - v.Count}/{sent} lost");
-    }
-
-    async Task<TcpProbe> TcpQuick(string ip, int port)
-    {
-        var vals = new List<double>(); const int attempts = 3;
-        for (var i = 0; i < attempts; i++)
-        {
-            try
-            {
-                using var c = new TcpClient(); var sw = Stopwatch.StartNew(); var task = c.ConnectAsync(ip, port); var done = await Task.WhenAny(task, Task.Delay(1500));
-                if (done == task && c.Connected) { sw.Stop(); vals.Add(sw.Elapsed.TotalMilliseconds); }
-            }
-            catch { }
-        }
-        return vals.Count == 0 ? new TcpProbe(0, 0, attempts, "No new TCP connect (existing game socket may still be valid)") : new TcpProbe(vals.Average(), vals.Count, attempts, $"{vals.Average():0.0} ms avg, {vals.Count}/{attempts} connects");
-    }
-
-    static TraceProbe ParseTrace(string text)
-    {
-        var hops = new List<(int No, double Rtt, string Ip)>();
-        foreach (var line in text.Split('\n'))
-        {
-            var m = Regex.Match(line.Trim(), @"^(\d+)\s+(.*)$"); if (!m.Success) continue;
-            var rest = m.Groups[2].Value;
-            var ip = Regex.Matches(rest, @"\b(?:\d{1,3}\.){3}\d{1,3}\b").Cast<Match>().Select(x => x.Value).FirstOrDefault() ?? "*";
-            var times = Regex.Matches(rest, @"<?(\d+)\s*ms").Cast<Match>().Select(x => double.Parse(x.Groups[1].Value)).ToList();
-            if (ip != "*" || times.Count > 0) hops.Add((int.Parse(m.Groups[1].Value), times.Count == 0 ? 0 : times.Average(), ip));
-        }
-        var responding = hops.Where(x => x.Ip != "*").ToList();
-        var last = responding.LastOrDefault();
-        var sig = string.Join(" > ", responding.TakeLast(8).Select(x => x.Ip));
-        return new TraceProbe(responding.Count, last.Rtt, sig, text);
-    }
-
-    static double Score(GameEndpoint e, Probe p, TcpProbe t, TraceProbe trace)
-    {
-        var s = 15.0 + (e.Confidence * 0.35);
-        if (e.State.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)) s += 10;
-        if (p.Received > 0) s += Math.Max(0, 25 - Math.Min(25, p.AvgMs / 5));
-        else if (t.Successes > 0) s += 14;
-        else if (trace.LastRttMs > 0) s += Math.Max(0, 10 - Math.Min(10, trace.LastRttMs / 20));
-        if (t.Successes > 0) s += 10;
-        if (trace.Hops > 0) s += 5;
-        return Math.Clamp(s, 0, 100);
-    }
-
-    static string ConfidenceText(CandidateResult r)
-    {
-        if (r.Endpoint.Confidence >= 80 && (r.Ping.Received > 0 || r.Tcp.Successes > 0 || r.Trace.Hops > 0)) return "High";
-        if (r.Endpoint.Confidence >= 55) return "Medium";
-        return "Low";
-    }
-
-    static string Explain(CandidateResult r)
-    {
-        var b = new StringBuilder("Why it ranked first:\n");
-        b.AppendLine($"• Game-process confidence: {r.Endpoint.Confidence}%.");
-        if (r.Endpoint.State.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)) b.AppendLine("• Existing established connection observed for the game process.");
-        if (r.Ping.Received == 0) b.AppendLine("• ICMP was blocked/ignored, so the analyzer did NOT treat it as 100% game packet loss.");
-        else b.AppendLine($"• ICMP baseline: {r.Ping.AvgMs:0.0} ms average.");
-        if (r.Tcp.Successes > 0) b.AppendLine($"• TCP connect evidence: {r.Tcp.AvgMs:0.0} ms average.");
-        if (r.Trace.Hops > 0) b.AppendLine($"• Route evidence: {r.Trace.Hops} responding hops; last responding RTT {r.Trace.LastRttMs:0.0} ms.");
-        b.AppendLine("• This is a measured candidate ranking, not a promise that the ISP can be forced onto a different upstream route.");
-        return b.ToString().TrimEnd();
-    }
-
-    async Task Connections()
-    {
-        L("\n=== AUTOMATIC LIVE CONNECTION DISCOVERY ===");
-        var items = await GameScanner.DiscoverAsync();
-        if (items.Count == 0) { L("No public endpoints found. Start an online game."); return; }
-        foreach (var x in items.Take(80)) L($"{(x.LikelyGame ? "GAME" : "NET ")}  {x.ProcessName} PID={x.Pid} {x.Protocol} {x.RemoteIp}:{x.RemotePort} {x.State} confidence={x.Confidence}%");
-        var first = items.FirstOrDefault(x => x.LikelyGame) ?? items.First(); target.Text = first.RemoteIp;
-        L($"Automatically selected: {first.RemoteIp}:{first.RemotePort}. No copying required.");
-    }
-
-    async Task Snapshot()
-    {
-        L("\n=== NETWORK SNAPSHOT ==="); L("Time: " + DateTime.Now); L(await Cmd("ipconfig.exe", "/all", 30000)); L("\n--- ROUTE PRINT ---"); L(await Cmd("route.exe", "print", 30000));
-    }
-
-    async Task DnsDiscovery()
-    {
-        L("\n=== DNS DISCOVERY ==="); foreach (var h in new[] { "crossfire.z8games.com", "z8games.com" }) { try { var a = await Dns.GetHostAddressesAsync(h); L($"{h}: {string.Join(", ", a.Where(x => x.AddressFamily == AddressFamily.InterNetwork))}"); } catch { L(h + ": resolution failed"); } }
-    }
-
-    async Task Routes() { L("\n=== WINDOWS ROUTE TABLE ==="); L(await Cmd("route.exe", "print", 30000)); }
-    async Task Ping() { var t = Target(); L($"\n=== PING 30x {t} ==="); L(await Cmd("ping.exe", $"-n 30 -w 1000 {t}", 60000)); }
-    async Task Trace() { var t = Target(); L($"\n=== TRACEROUTE {t} ==="); L(await Cmd("tracert.exe", $"-d -h 30 -w 800 {t}", 60000)); }
-    async Task Path() { var t = Target(); L($"\n=== PATH QUALITY {t} ==="); L("This can take several minutes."); L(await Cmd("pathping.exe", $"-n -q 5 -p 100 -w 800 -h 20 {t}", 180000)); }
-
-    string Target()
-    {
-        var t = target.Text.Trim(); if (string.IsNullOrWhiteSpace(t)) throw new Exception("No endpoint selected. Use AUTO ANALYZE GAME or enter one manually."); return t;
-    }
-
-    void UpsertMemory(GameProfile p)
-    {
-        var old = memory.FindIndex(x => x.Key == p.Key); if (old >= 0) memory[old] = p; else memory.Add(p);
-    }
-
-    void RefreshMemoryList()
-    {
-        if (InvokeRequired) { BeginInvoke(RefreshMemoryList); return; }
-        games.BeginUpdate(); games.Items.Clear(); gameImages.Images.Clear();
-        foreach (var p in memory.OrderByDescending(x => x.LastSeenUtc))
-        {
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(p.IconPath) && File.Exists(p.IconPath)) using (var img = Image.FromFile(p.IconPath)) gameImages.Images.Add(new Bitmap(img));
-                else gameImages.Images.Add(CreateFallbackIcon());
-            }
-            catch { gameImages.Images.Add(CreateFallbackIcon()); }
-            var idx = gameImages.Images.Count - 1;
-            games.Items.Add(new ListViewItem(p.DisplayName + (p.Observations > 0 ? $"\n{p.Observations} scans" : ""), idx) { Tag = p.Key });
-        }
-        games.EndUpdate();
-    }
-
-    void ShowSelectedMemory()
-    {
-        if (games.SelectedItems.Count == 0) return;
-        var key = games.SelectedItems[0].Tag as string; var p = memory.FirstOrDefault(x => x.Key == key); if (p == null) return;
-        L($"\n=== GAME MEMORY: {p.DisplayName} ==="); L($"Executable: {p.ExecutablePath}"); L($"First seen: {p.FirstSeenUtc.ToLocalTime()}"); L($"Last seen:  {p.LastSeenUtc.ToLocalTime()}"); L($"Analyses:   {p.Observations}"); L($"Last best: {p.LastBestEndpoint}  score={p.LastScore:0}/100");
-        if (p.RecentPaths.Count > 0) { L("Recent route signatures:"); foreach (var x in p.RecentPaths.Take(5)) L("  " + x); }
-    }
-
-    static Bitmap CreateFallbackIcon()
-    {
-        var b = new Bitmap(64, 64, PixelFormat.Format32bppArgb); using var g = Graphics.FromImage(b); g.Clear(Color.FromArgb(28, 36, 48)); using var pen = new Pen(Color.FromArgb(80, 210, 220), 4); using var brush = new SolidBrush(Color.FromArgb(45, 60, 80));
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias; g.FillEllipse(brush, 8, 17, 48, 30); g.DrawEllipse(pen, 8, 17, 48, 30); g.DrawLine(pen, 19, 32, 29, 32); g.DrawLine(pen, 24, 27, 24, 37); g.FillEllipse(Brushes.White, 41, 28, 5, 5); g.FillEllipse(Brushes.White, 49, 28, 5, 5); return b;
-    }
-
-    async Task SaveReport()
-    {
-        using var dialog = new SaveFileDialog { Filter = "Text report (*.txt)|*.txt", FileName = "GameRouteLab_Report_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".txt" };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return; await File.WriteAllTextAsync(dialog.FileName, log.Text); L("\nReport saved: " + dialog.FileName);
-    }
+    async Task DetectNetwork(){var n=await NetworkProfileDetector.DetectAsync();network.Text=$"ISP: {n.ISP} | ASN: {n.ASN} | GW: {n.Gateway}";L($"\n=== NETWORK / ISP ===\nInterface: {n.InterfaceName}\nLocal IP: {n.LocalIp}\nGateway: {n.Gateway}\nWAN: {n.WanType}\nPublic IP: {n.PublicIp}\nISP: {n.ISP}\nOrganization: {n.Organization}\nASN: {n.ASN}\nLocation: {n.City}, {n.Country}\nDNS: {n.DnsServers}");}
+    async Task DetectRouter(){var r=await RouterDetector.DetectAsync();L($"\n=== ROUTER FINGERPRINT ===\nGateway: {r.Gateway}\nVendor: {r.Vendor}\nModel: {r.Model}\nFirmware: {r.Firmware}\nManagement UI: {r.ManagementUrl}\nConfidence: {r.Confidence}\nNotes: {r.Notes}");}
+    async Task Connections(){L("\n=== CONNECTIONS ===");L(await Cmd("netstat.exe","-ano",20000));}
+    async Task Routes(){L("\n=== ROUTE TABLE ===");L(await Cmd("route.exe","print",20000));}
+    async Task Ping(){var ip=target.Text.Trim();if(ip==""){L("Enter an endpoint or run AUTO ANALYZE first.");return;}L($"\n=== PING 30x {ip} ===");L(await Cmd("ping.exe",$"-n 30 {ip}",50000));}
+    async Task Trace(){var ip=target.Text.Trim();if(ip==""){L("Enter an endpoint or run AUTO ANALYZE first.");return;}L($"\n=== TRACEROUTE {ip} ===");L(await Cmd("tracert.exe",$"-d -h 30 {ip}",60000));}
+    async Task Path(){var ip=target.Text.Trim();if(ip==""){L("Enter an endpoint or run AUTO ANALYZE first.");return;}L($"\n=== PATH QUALITY {ip} ===");L(await Cmd("pathping.exe",$"-n -q 10 -p 250 {ip}",180000));}
+    async Task<string> Cmd(string file,string args,int timeout){using var p=Process.Start(new ProcessStartInfo(file,args){RedirectStandardOutput=true,RedirectStandardError=true,UseShellExecute=false,CreateNoWindow=true,StandardOutputEncoding=Encoding.UTF8})??throw new Exception("Could not start "+file);var o=p.StandardOutput.ReadToEndAsync();var er=p.StandardError.ReadToEndAsync();using var c=new CancellationTokenSource(timeout);try{await p.WaitForExitAsync(c.Token);}catch{try{p.Kill(true);}catch{}return(await o)+"\nTIMEOUT\n"+await er;}return await o+"\n"+await er;}
+    async Task SaveReport(){using var s=new SaveFileDialog{Filter="Text report|*.txt",FileName=$"GameRouteLab_{DateTime.Now:yyyyMMdd_HHmmss}.txt"};if(s.ShowDialog(this)!=DialogResult.OK)return;await File.WriteAllTextAsync(s.FileName,log.Text);L("Report saved: "+s.FileName);}
+    protected override void Dispose(bool disposing){if(disposing)appIcon?.Dispose();base.Dispose(disposing);}
 }
