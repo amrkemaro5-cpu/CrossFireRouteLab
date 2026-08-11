@@ -209,10 +209,8 @@ public sealed partial class DashboardForm
         if (center.Controls[3] is not GRLCard card) return;
 
         card.Padding = new Padding(10, 34, 10, 10);
-        console.Dock = DockStyle.Fill;
+        console.Dock = DockStyle.None;
         console.Margin = Padding.Empty;
-        console.Location = Point.Empty;
-        console.Size = Size.Empty;
         console.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         console.BackColor = Color.FromArgb(1, 4, 10);
         console.ForeColor = TextColor;
@@ -223,7 +221,17 @@ public sealed partial class DashboardForm
         console.ScrollBars = RichTextBoxScrollBars.Both;
         console.HideSelection = false;
         console.DetectUrls = false;
-        console.BringToFront();
+
+        void ResizeConsole(object? sender, EventArgs e)
+        {
+            var w = Math.Max(80, card.ClientSize.Width - 20);
+            var h = Math.Max(55, card.ClientSize.Height - 44);
+            console.Bounds = new Rectangle(10, 34, w, h);
+        }
+
+        card.Resize -= ResizeConsole;
+        card.Resize += ResizeConsole;
+        ResizeConsole(card, EventArgs.Empty);
 
         var header = card.Controls.OfType<Label>().FirstOrDefault(x => x.Text == "LIVE ANALYSIS CONSOLE");
         if (header != null)
