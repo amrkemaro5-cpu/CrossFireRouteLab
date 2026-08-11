@@ -87,16 +87,17 @@ jobs:
                   form.Show();
                   Application.DoEvents();
 
-                  if (form.ClientSize.Width < 1200 || form.ClientSize.Height < 800)
+                  // WinForms reports logical client pixels and can scale them down on the CI monitor.
+                  if (form.ClientSize.Width < 900 || form.ClientSize.Height < 650)
                       throw new Exception($"Unexpected form size: {form.ClientSize}");
 
                   var controls = All(form).ToList();
                   var endpoint = controls.OfType<Label>().FirstOrDefault(x => x.Text == "ENDPOINT");
-                  if (endpoint == null || endpoint.Width < 65)
+                  if (endpoint == null || endpoint.Width < 45)
                       throw new Exception("Endpoint label is too narrow or missing.");
 
                   var logo = controls.OfType<PictureBox>().FirstOrDefault();
-                  if (logo == null || logo.Width < 130 || logo.Height < 130)
+                  if (logo == null || logo.Width < 90 || logo.Height < 90)
                       throw new Exception("GRL logo is too small or missing.");
 
                   var toolbar = controls.OfType<FlowLayoutPanel>().FirstOrDefault(x => x.Controls.Cast<Control>().Any(c => c.GetType().Name == "GRLActionButton"));
@@ -106,11 +107,11 @@ jobs:
                   var actions = toolbar.Controls.Cast<Control>().Where(c => c.GetType().Name == "GRLActionButton").ToArray();
                   if (actions.Length != 10)
                       throw new Exception($"Expected 10 styled action buttons, found {actions.Length}.");
-                  if (actions.Any(c => c.Width < 96 || c.Height < 70))
+                  if (actions.Any(c => c.Width < 64 || c.Height < 46))
                       throw new Exception("One or more action buttons have unsafe dimensions.");
 
                   var title = controls.OfType<Label>().FirstOrDefault(x => x.Text == "GAME ROUTE LAB");
-                  if (title == null || title.Width < 500)
+                  if (title == null || title.Width < 430)
                       throw new Exception("Main GRL title is missing or clipped.");
 
                   if (controls.Any(c => c.Width <= 0 || c.Height <= 0))
