@@ -72,8 +72,6 @@ public static class GameScanner
         var cache = new Dictionary<int, (string Name, string Path, string Title)>();
         var result = new List<GameEndpoint>();
 
-        // First collect real public sockets. This remains the preferred source because
-        // it gives us the actual remote endpoint used by the game.
         foreach (var line in text.Replace('\r', '\n').Split('\n'))
         {
             var m = Regex.Match(
@@ -99,25 +97,11 @@ public static class GameScanner
             var score = Confidence(info.Name, info.Path, info.Title, pid, foreground, protocol, port, state, true);
             if (score < 30 || GameProfileStore.IsBlocked(info.Name)) continue;
 
-            result.Add(new GameEndpoint(
-                info.Name,
-                pid,
-                protocol,
-                ip,
-                port,
-                state,
-                score >= 45,
-                score,
-                info.Path));
+            result.Add(new GameEndpoint(info.Name, pid, protocol, ip, port, state, score >= 45, score, info.Path));
         }
 
-        // Critical fallback: a game must not disappear simply because its anti-cheat,
-        // renderer, UDP transport, firewall state, or current game screen prevents
-        // netstat from exposing a public socket at the exact scan moment. Enumerate
-        // running processes separately and identify the game by executable/path/window.
-        // This is what makes REFRESH GAMES and AUTO ANALYZE useful before an endpoint
-        // is visible. A synthetic endpoint is never used for ping/trace because its
-        // RemotePort is 0; it only represents a detected game process.
+        // Process-only fallback: identify a game even when its public socket is not
+        // visible yet. Such records have RemotePort=0 and are never pinged/traced.
         foreach (var process in Process.GetProcesses())
         {
             try
@@ -129,31 +113,18 @@ public static class GameScanner
                 var score = Confidence(info.Name, info.Path, info.Title, process.Id, foreground, "", 0, "NO_PUBLIC_SOCKET", false);
                 if (!IsStrongProcessCandidate(info.Name, info.Path, info.Title, process.Id, foreground, score)) continue;
 
-                result.Add(new GameEndpoint(
-                    info.Name,
-                    process.Id,
-                    "",
-                    "",
-                    0,
-                    "NO_PUBLIC_SOCKET",
-                    true,
-                    score,
-                    info.Path));
+                result.Add(new GameEndpoint(info.Name, process.Id, "", "", 0, "NO_PUBLIC_SOCKET", true, score, info.Path));
             }
             catch { }
             finally { process.Dispose(); }
         }
 
-        // If the same PID has real sockets, keep those records as the useful endpoint
-        // evidence and retain the process-only record only when it is the best proof
-        // of game identity. This also prevents duplicate memory entries.
         return result
             .GroupBy(x => x.Pid)
             .SelectMany(group =>
             {
                 var real = group.Where(x => x.RemotePort > 0).ToList();
-                if (real.Count > 0) return real;
-                return group.Take(1);
+                return real.Count > 0 ? real : group.Take(1);
             })
             .GroupBy(x => $"{x.Pid}|{x.Protocol}|{x.RemoteIp}|{x.RemotePort}")
             .Select(g => g.OrderByDescending(x => x.Confidence).First())
@@ -188,12 +159,12 @@ public static class GameScanner
         var folder = GameFolders.Any(w => lowerPath.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureName = FutureGameWords.Any(w => lowerProcess.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureTitle = FutureGameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
-        var foreground = pid == foreground;
+        var foregroundProcessCandidate = pid == foreground;
         var hasTitle = !string.IsNullOrWhiteSpace(title);
 
         if (known && score >= 45) return true;
         if (folder && score >= 45) return true;
-        if (foreground && hasTitle && (futureName || futureTitle) && score >= 45) return true;
+        if (foregroundProcessCandidate && hasTitle && (futureName || futureTitle) && score >= 45) return true;
         return false;
     }
 
@@ -235,8 +206,7 @@ public static class GameScanner
         var gameFolder = GameFolders.Any(f => lowerPath.Contains(f, StringComparison.OrdinalIgnoreCase));
         var gameTitle = GameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
         var foregroundProcess = pid == foreground;
-        var interactiveSocket = hasPublicSocket && (state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) ||
-                                                     state.Equals("ACTIVE", StringComparison.OrdinalIgnoreCase));
+        var interactiveSocket = hasPublicSocket && (state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) || state.Equals("ACTIVE", StringComparison.OrdinalIgnoreCase));
         var hasWindowTitle = !string.IsNullOrWhiteSpace(title);
         var highPort = port >= 1024 && port <= 65535;
         var webPort = port is 80 or 443;
@@ -256,14 +226,8 @@ public static class GameScanner
         if (futureName) score += 20;
         if (futureTitle) score += 18;
 
-        // Unknown foreground game clients are supported when their executable/title
-        // looks game-like. We still require a real window and a game-oriented token;
-        // an arbitrary foreground application is never promoted to game memory.
-        if (!hasPublicSocket && foregroundProcess && hasWindowTitle && (futureName || futureTitle))
-            score += 10;
-
-        if (!foregroundProcess && !knownGameName && !gameFolder && !gameTitle)
-            score -= 20;
+        if (!hasPublicSocket && foregroundProcess && hasWindowTitle && (futureName || futureTitle)) score += 10;
+        if (!foregroundProcess && !knownGameName && !gameFolder && !gameTitle) score -= 20;
 
         return Math.Clamp(score, 0, 100);
     }
