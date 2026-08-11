@@ -560,3 +560,4 @@ sealed class AnimatedSparkline : Control
 }
 
 
+
