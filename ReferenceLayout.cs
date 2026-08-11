@@ -1,7 +1,8 @@
 namespace CrossFireRouteLab;
 
-// Reference-layout pass: keeps the dashboard aligned to the approved neon GRL composition
-// while leaving the analyzer/network logic untouched.
+// Stable reference layout pass. This pass is intentionally deterministic:
+// it uses the same geometry rules at startup and on resize so controls do not
+// drift, clip, or become misaligned at common Windows DPI settings.
 public sealed partial class DashboardForm
 {
     void ApplyReferenceLayout()
@@ -10,31 +11,49 @@ public sealed partial class DashboardForm
         try
         {
             ClientSize = new Size(1536, 900);
-            MinimumSize = new Size(1220, 800);
+            MinimumSize = new Size(1180, 760);
+            AutoScaleMode = AutoScaleMode.Dpi;
 
             var root = Controls.OfType<TableLayoutPanel>().FirstOrDefault();
             if (root == null || root.Controls.Count < 4) return;
 
-            root.RowStyles[0].Height = 154;
-            root.RowStyles[1].Height = 88;
-            root.RowStyles[3].Height = 38;
+            root.Dock = DockStyle.Fill;
+            root.Margin = Padding.Empty;
+            root.Padding = Padding.Empty;
+            root.RowStyles[0].SizeType = SizeType.Absolute;
+            root.RowStyles[0].Height = 142;
+            root.RowStyles[1].SizeType = SizeType.Absolute;
+            root.RowStyles[1].Height = 82;
+            root.RowStyles[2].SizeType = SizeType.Percent;
+            root.RowStyles[2].Height = 100;
+            root.RowStyles[3].SizeType = SizeType.Absolute;
+            root.RowStyles[3].Height = 36;
 
             var header = root.Controls[0];
             var toolbar = root.Controls[1];
             var body = root.Controls[2] as TableLayoutPanel;
             if (body == null) return;
 
-            body.Padding = new Padding(16, 10, 16, 8);
+            body.Dock = DockStyle.Fill;
+            body.Margin = Padding.Empty;
+            body.Padding = new Padding(14, 8, 14, 7);
             body.ColumnStyles[0].SizeType = SizeType.Absolute;
-            body.ColumnStyles[0].Width = 278;
+            body.ColumnStyles[0].Width = 262;
+            body.ColumnStyles[1].SizeType = SizeType.Percent;
+            body.ColumnStyles[1].Width = 100;
             body.ColumnStyles[2].SizeType = SizeType.Absolute;
-            body.ColumnStyles[2].Width = 338;
+            body.ColumnStyles[2].Width = 318;
 
             PolishHeader(header);
             PolishToolbar(toolbar);
             PolishCenter(body.Controls[1]);
+            PolishConsole(body.Controls[1]);
             PolishSidePanels(body.Controls[0], body.Controls[2]);
             AddReferenceAnimation(header, toolbar, body);
+
+            root.Resize -= RootResize;
+            root.Resize += RootResize;
+            RootResize(root, EventArgs.Empty);
         }
         finally
         {
@@ -43,8 +62,24 @@ public sealed partial class DashboardForm
         }
     }
 
+    void RootResize(object? sender, EventArgs e)
+    {
+        if (sender is not TableLayoutPanel root || root.Controls.Count < 3) return;
+        var body = root.Controls[2] as TableLayoutPanel;
+        if (body == null) return;
+
+        var available = Math.Max(0, body.ClientSize.Width - body.Padding.Horizontal);
+        var left = available < 1000 ? 235 : 262;
+        var right = available < 1000 ? 292 : 318;
+        body.ColumnStyles[0].Width = left;
+        body.ColumnStyles[2].Width = right;
+        body.PerformLayout();
+    }
+
     static Label? FindLabel(Control root, string text)
-        => root.Controls.Cast<Control>().SelectMany(c => c is Label l && l.Text == text ? new[] { l } : FindLabels(c, text)).FirstOrDefault();
+        => root.Controls.Cast<Control>()
+            .SelectMany(c => c is Label l && l.Text == text ? new[] { l } : FindLabels(c, text))
+            .FirstOrDefault();
 
     static IEnumerable<Label> FindLabels(Control root, string text)
     {
@@ -57,12 +92,14 @@ public sealed partial class DashboardForm
 
     void PolishHeader(Control header)
     {
+        header.Dock = DockStyle.Fill;
+
         var logo = header.Controls.OfType<PictureBox>().FirstOrDefault();
         if (logo != null)
         {
             logo.Image?.Dispose();
-            logo.Image = Brand.CreateLogo(144);
-            logo.Bounds = new Rectangle(30, 5, 146, 146);
+            logo.Image = Brand.CreateLogo(150);
+            logo.Bounds = new Rectangle(28, 4, 150, 132);
             logo.BackColor = Color.Transparent;
             logo.SizeMode = PictureBoxSizeMode.Zoom;
         }
@@ -70,38 +107,45 @@ public sealed partial class DashboardForm
         var title = FindLabel(header, "GAME ROUTE LAB");
         if (title != null)
         {
-            title.Bounds = new Rectangle(184, 30, 700, 42);
-            title.Font = new Font("Segoe UI Semibold", 31, FontStyle.Bold);
+            title.Bounds = new Rectangle(178, 25, 720, 42);
+            title.Font = new Font("Segoe UI Semibold", 30, FontStyle.Bold);
+            title.AutoEllipsis = false;
         }
 
         var slogan = FindLabel(header, "SMARTER ROUTES.  BETTER PING.");
         if (slogan != null)
         {
-            slogan.Bounds = new Rectangle(188, 72, 650, 24);
+            slogan.Bounds = new Rectangle(182, 67, 660, 23);
             slogan.Font = new Font("Segoe UI Semibold", 12.5f, FontStyle.Bold);
         }
 
         var subtitle = FindLabel(header, "LOCAL-FIRST GAME NETWORK ANALYZER");
         if (subtitle != null)
         {
-            subtitle.Bounds = new Rectangle(189, 99, 650, 20);
+            subtitle.Bounds = new Rectangle(183, 94, 680, 20);
             subtitle.Font = new Font("Segoe UI", 9, FontStyle.Regular);
         }
 
         var status = header.Controls.OfType<GRLStatus>().FirstOrDefault();
         if (status != null)
-            status.Bounds = new Rectangle(Math.Max(850, header.ClientSize.Width - 278), 24, 250, 70);
+            status.Bounds = new Rectangle(Math.Max(760, header.ClientSize.Width - 278), 22, 250, 70);
     }
 
     void PolishToolbar(Control toolbar)
     {
+        toolbar.Dock = DockStyle.Fill;
+        toolbar.Padding = new Padding(12, 5, 12, 5);
+
         var flow = toolbar.Controls.OfType<FlowLayoutPanel>().FirstOrDefault();
         if (flow == null) return;
 
-        toolbar.Padding = new Padding(12, 6, 12, 5);
-        flow.Padding = new Padding(4, 0, 4, 0);
+        flow.Dock = DockStyle.Fill;
+        flow.Padding = new Padding(2, 0, 2, 0);
+        flow.Margin = Padding.Empty;
         flow.WrapContents = false;
         flow.AutoScroll = true;
+        flow.HorizontalScroll.Enabled = true;
+        flow.VerticalScroll.Enabled = false;
         flow.AutoSize = false;
         flow.FlowDirection = FlowDirection.LeftToRight;
 
@@ -109,23 +153,24 @@ public sealed partial class DashboardForm
         {
             if (c is Label l && l.Text == "ENDPOINT")
             {
-                l.Width = 70;
-                l.Height = 76;
-                l.Margin = new Padding(0, 0, 4, 0);
+                l.Width = 72;
+                l.Height = 72;
+                l.Margin = new Padding(0, 0, 5, 0);
                 l.TextAlign = ContentAlignment.MiddleLeft;
                 l.AutoEllipsis = false;
             }
             else if (c is TextBox t)
             {
-                t.Width = 162;
+                t.Width = 176;
                 t.Height = 34;
-                t.Margin = new Padding(0, 20, 8, 0);
+                t.Margin = new Padding(0, 19, 9, 0);
                 t.Font = new Font("Segoe UI", 9.2f);
+                t.Anchor = AnchorStyles.Top | AnchorStyles.Left;
             }
             else if (c is GRLActionButton b)
             {
                 b.Width = 104;
-                b.Height = 76;
+                b.Height = 72;
                 b.Margin = new Padding(3, 0, 3, 0);
             }
         }
@@ -134,50 +179,95 @@ public sealed partial class DashboardForm
     void PolishCenter(Control centerControl)
     {
         if (centerControl is not TableLayoutPanel center) return;
+
+        center.Dock = DockStyle.Fill;
         center.Margin = Padding.Empty;
-        center.RowStyles[0].Height = 30;
-        center.RowStyles[1].Height = 27;
-        center.RowStyles[2].Height = 25;
-        center.RowStyles[3].Height = 18;
+        center.Padding = Padding.Empty;
+        center.RowStyles[0].SizeType = SizeType.Absolute;
+        center.RowStyles[0].Height = 178;
+        center.RowStyles[1].SizeType = SizeType.Absolute;
+        center.RowStyles[1].Height = 144;
+        center.RowStyles[2].SizeType = SizeType.Absolute;
+        center.RowStyles[2].Height = 148;
+        center.RowStyles[3].SizeType = SizeType.Percent;
+        center.RowStyles[3].Height = 100;
 
-        var hero = center.Controls.OfType<GRLCard>().FirstOrDefault();
-        if (hero != null) hero.Margin = new Padding(0, 0, 0, 6);
-
+        if (center.Controls.Count > 0 && center.Controls[0] is GRLCard hero)
+            hero.Margin = new Padding(0, 0, 0, 5);
         if (center.Controls.Count > 1 && center.Controls[1] is GRLCard summary)
-            summary.Margin = new Padding(0, 0, 0, 6);
-
+            summary.Margin = new Padding(0, 0, 0, 5);
         if (center.Controls.Count > 2 && center.Controls[2] is TableLayoutPanel bestRow)
-            bestRow.Margin = new Padding(0, 0, 0, 6);
+            bestRow.Margin = new Padding(0, 0, 0, 5);
+        if (center.Controls.Count > 3 && center.Controls[3] is GRLCard consoleCard)
+            consoleCard.Margin = Padding.Empty;
+    }
+
+    void PolishConsole(Control centerControl)
+    {
+        if (centerControl is not TableLayoutPanel center || center.Controls.Count < 4) return;
+        if (center.Controls[3] is not GRLCard card) return;
+
+        card.Padding = new Padding(10, 34, 10, 10);
+        console.Dock = DockStyle.Fill;
+        console.Margin = Padding.Empty;
+        console.Location = Point.Empty;
+        console.Size = Size.Empty;
+        console.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        console.BackColor = Color.FromArgb(1, 4, 10);
+        console.ForeColor = TextColor;
+        console.BorderStyle = BorderStyle.FixedSingle;
+        console.Font = new Font("Cascadia Mono", 8.8f);
+        console.ReadOnly = true;
+        console.WordWrap = false;
+        console.ScrollBars = RichTextBoxScrollBars.Both;
+        console.HideSelection = false;
+        console.DetectUrls = false;
+        console.BringToFront();
+
+        var header = card.Controls.OfType<Label>().FirstOrDefault(x => x.Text == "LIVE ANALYSIS CONSOLE");
+        if (header != null)
+        {
+            header.Location = new Point(10, 7);
+            header.Size = new Size(Math.Max(220, card.ClientSize.Width - 20), 22);
+            header.BringToFront();
+        }
     }
 
     void PolishSidePanels(Control? left, Control? right)
     {
         if (left is TableLayoutPanel leftLayout)
         {
-            leftLayout.RowStyles[1].Height = 154;
+            leftLayout.Dock = DockStyle.Fill;
             leftLayout.Padding = Padding.Empty;
+            leftLayout.RowStyles[1].SizeType = SizeType.Absolute;
+            leftLayout.RowStyles[1].Height = 154;
         }
 
         if (right is TableLayoutPanel rightLayout)
         {
+            rightLayout.Dock = DockStyle.Fill;
+            rightLayout.Padding = Padding.Empty;
+            rightLayout.RowStyles[0].SizeType = SizeType.Percent;
             rightLayout.RowStyles[0].Height = 31;
+            rightLayout.RowStyles[1].SizeType = SizeType.Percent;
             rightLayout.RowStyles[1].Height = 34;
+            rightLayout.RowStyles[2].SizeType = SizeType.Percent;
             rightLayout.RowStyles[2].Height = 35;
         }
     }
 
     void AddReferenceAnimation(Control header, Control toolbar, TableLayoutPanel body)
     {
-        animationTimer.Tick += (_, _) =>
-        {
-            var pulse = (float)((Math.Sin(phase * 1.35f) + 1.0) * .5);
-            analysisTitle.ForeColor = Blend(Purple, Cyan, pulse * .32f);
-            systemText.ForeColor = Blend(Cyan, Green, pulse * .35f);
-            header.Invalidate();
-            toolbar.Invalidate();
-            body.Invalidate();
-            games.Invalidate();
-        };
+        animationTimer.Tick -= ReferenceAnimationTick;
+        animationTimer.Tick += ReferenceAnimationTick;
+    }
+
+    void ReferenceAnimationTick(object? sender, EventArgs e)
+    {
+        var pulse = (float)((Math.Sin(phase * 1.35f) + 1.0) * .5);
+        analysisTitle.ForeColor = Blend(Purple, Cyan, pulse * .30f);
+        systemText.ForeColor = Blend(Cyan, Green, pulse * .32f);
+        games.Invalidate();
     }
 
     static Color Blend(Color a, Color b, float amount)
