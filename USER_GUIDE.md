@@ -10,16 +10,18 @@
 
 ## Analyze a game automatically
 
-1. Start your game.
+1. Start the game itself, not only its launcher.
 2. Sign in normally.
 3. Enter an online lobby/match/session so the game creates its real network connections.
 4. Keep the game running.
 5. Alt-Tab to **Game Route Lab**.
-6. Click **AUTO ANALYZE**.
-7. Wait for the analysis to finish. It may take a few minutes because traceroute is performed for candidate endpoints.
-8. Read **CURRENT RESULT** for the best measured candidate.
-9. Look at **GAME MEMORY** on the left. The game icon is taken from the game's executable when possible.
-10. Run another analysis later. The program stores observations locally and keeps the game's previous best endpoint and route evidence.
+6. The dashboard now performs a background game scan while it is open. You can also click **REFRESH GAMES** for an immediate scan.
+7. Click **AUTO ANALYZE**.
+8. Wait for the analysis to finish. Traceroute can take time for each candidate endpoint.
+9. Read **BEST ENDPOINT (CURRENT)** and **ROUTE QUALITY** for the measured result.
+10. The endpoint field is automatically filled from the best saved endpoint when one exists; manual entry is still supported.
+11. Look at **GAME MEMORY** on the left. The game icon is taken from the game's executable when possible.
+12. Run another analysis later. The program stores observations locally and keeps previous route evidence for each detected game.
 
 ## What the program detects by itself
 
@@ -36,19 +38,39 @@
 
 You do **not** need to copy an IP from `netstat` anymore.
 
+## Game detection and future games
+
+The scanner is not limited to one hard-coded game. It uses several signals together:
+
+- known game names
+- game executable folders such as `Games`, Steam `steamapps\common`, Riot, Garena and similar locations
+- the active window/process
+- a live public network socket
+- the socket protocol and port
+- the game's window title when available
+
+This allows unknown/future games to be candidates without blindly treating every Internet-connected application as a game.
+
+ChatGPT, Chrome, Edge, Firefox, Discord, Steam helper processes, launchers, Windows services and other known non-game processes are explicitly filtered out of game memory.
+
 ## If the program says "No game detected"
 
-1. Make sure the game is actually running.
+1. Make sure the actual game executable is running.
 2. Enter an online match/session, not only the launcher.
-3. Alt-Tab back to Game Route Lab.
-4. Click **REFRESH GAMES**.
-5. Then click **AUTO ANALYZE** again.
+3. Keep the game visible or make it the foreground application once.
+4. Alt-Tab back to Game Route Lab.
+5. Click **REFRESH GAMES**.
+6. Then click **AUTO ANALYZE** again.
 
-The scanner intentionally refuses to guess common applications such as ChatGPT, Chrome, Edge, Firefox, Discord, Steam helpers and Windows services as games. This is better than selecting the wrong process and building bad route data.
+If the game is installed in an unusual folder and has an unusual executable name, the foreground-window + live-socket detection is used as a fallback. The scanner still excludes known non-game applications.
 
 ## If a game is detected but no game sockets are found
 
 This usually means the game is between sessions, is using a protected/network architecture that does not expose a useful public socket at that moment, or the connection disappeared before the scan. Enter an active online match and run the scan again.
+
+## Live analysis console
+
+The **LIVE ANALYSIS CONSOLE** is intentionally resizable and has vertical/horizontal scrollbars. Use the scrollbar or mouse wheel to inspect older scan output, route-table data, traceroute output and diagnostic messages.
 
 ## Understanding ping results
 
@@ -62,16 +84,16 @@ Game Route Lab treats ICMP-only failure as **unknown/blocked** and combines proc
 
 ## Manual tools
 
-- **PING 30x** — 30 ICMP probes to the endpoint in the box.
+- **PING 30x** — 30 ICMP probes to the selected endpoint.
 - **TRACEROUTE** — Windows `tracert` route discovery.
-- **PATH QUALITY** — Windows `pathping`; this can take several minutes.
-- **CONNECTIONS** — current `netstat -ano` snapshot.
+- **PATH QUALITY** — route-quality measurement using the selected endpoint.
 - **ROUTE TABLE** — current Windows route table.
+- **FIND CONNECTIONS** — current game connection candidates.
 - **NETWORK** — local/ISP profile.
 - **ROUTER** — gateway/router fingerprint.
-- **SAVE REPORT** — saves the console to a text report.
+- **SAVE REPORT** — saves the console and current result to a text report.
 
-AUTO ANALYZE is the recommended path because it chooses the game endpoints automatically.
+AUTO ANALYZE is the recommended path because it discovers game endpoints automatically and ranks the measured candidates.
 
 ## Where game memory is stored
 
@@ -81,8 +103,8 @@ AUTO ANALYZE is the recommended path because it chooses the game endpoints autom
 
 The program stores profiles and cached game icons there. It does not store your router password.
 
-## Important limitation
+## Important limitation: route optimization
 
-This application is currently **read-only**. It measures and ranks routes; it does not force your ISP to use an arbitrary upstream route. A Windows static route cannot command WE/Telecom Egypt to change its upstream Internet routing.
+This application remains **read-only** in this build. It measures and ranks routes; it does not force your ISP to use an arbitrary upstream route.
 
-The goal is to collect reliable measurements first. Only after enough evidence is available should any route-selection idea be considered.
+A future optimization mode should be treated separately from measurement mode and should require explicit user confirmation, show exactly what Windows setting would change, create a rollback point, and verify the result. The current analyzer never silently changes DNS, PPPoE, Windows routes, router settings or firmware.

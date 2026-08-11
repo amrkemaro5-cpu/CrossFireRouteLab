@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace CrossFireRouteLab;
 
-public sealed partial class DashboardForm : Form
+public sealed class DashboardForm : Form
 {
     static readonly Color Bg = Color.FromArgb(2, 5, 13);
     static readonly Color Surface = Color.FromArgb(6, 12, 25);
@@ -49,7 +49,6 @@ public sealed partial class DashboardForm : Form
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         memory.AddRange(GameProfileStore.Load());
         BuildUi();
-        ApplyReferenceLayout();
         RefreshMemory();
         Log("GAME ROUTE LAB v7.0");
         Log("Smart game detection • ISP • router • endpoint • route quality • local game memory");
@@ -558,5 +557,4 @@ sealed class AnimatedSparkline : Control
         base.OnPaint(e); if (Width < 20 || Height < 20) return; e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; using var grid = new Pen(Color.FromArgb(22, 45, 72)); for (var y = 12; y < Height; y += 20) e.Graphics.DrawLine(grid, 0, y, Width, y); if (Values.Count < 2) return; var min = Values.Min(); var max = Values.Max(); var range = Math.Max(1, max - min); var points = Values.Select((v, i) => new Point(8 + i * Math.Max(1, (Width - 16) / Math.Max(1, Values.Count - 1)), Height - 10 - (int)((v - min) / range * Math.Max(10, Height - 24)))).ToArray(); using var line = new Pen(Color.FromArgb(34, 240, 106), 2); e.Graphics.DrawLines(line, points); using var dot = new SolidBrush(Color.FromArgb(34, 240, 106)); foreach (var point in points) e.Graphics.FillEllipse(dot, point.X - 2, point.Y - 2, 5, 5); var pulse = (int)((Math.Sin(Phase * 2) + 1) * 2); var last = points[^1]; using var glow = new SolidBrush(Color.FromArgb(55, 34, 240, 106)); e.Graphics.FillEllipse(glow, last.X - 5 - pulse, last.Y - 5 - pulse, 10 + pulse * 2, 10 + pulse * 2);
     }
 }
-
 
