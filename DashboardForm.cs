@@ -142,7 +142,7 @@ public sealed partial class DashboardForm : Form
         center.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var hero = new GRLCard { Dock = DockStyle.Fill, Accent = Purple };
-        radar.Size = new Size(150, 150); radar.Location = new Point(18, 27); radar.BackColor = Color.Transparent; hero.Controls.Add(radar);
+        radar.Size = new Size(150, 150); radar.Location = new Point(18, 27); radar.BackColor = Surface; hero.Controls.Add(radar);
         analysisTitle.Text = "AUTO ANALYSIS READY"; analysisTitle.Location = new Point(190, 18); analysisTitle.Size = new Size(620, 36); analysisTitle.Font = new Font("Segoe UI Semibold", 21, FontStyle.Bold); analysisTitle.ForeColor = Purple; hero.Controls.Add(analysisTitle);
         var sub = Label("Detecting the game, connections and route quality automatically...", new Point(190, 58), new Size(760, 24), 10.5f, Muted); hero.Controls.Add(sub);
         progress.Location = new Point(190, 90); progress.Size = new Size(780, 14); hero.Controls.Add(progress);
@@ -164,7 +164,7 @@ public sealed partial class DashboardForm : Form
         best.Text = "—"; best.Location = new Point(20, 52); best.Size = new Size(520, 42); best.Font = new Font("Segoe UI Semibold", 15, FontStyle.Bold); best.ForeColor = TextColor; result.Controls.Add(best);
         metrics.Text = "LATENCY     — ms\r\nLOSS        —\r\nJITTER      — ms\r\nSTABILITY   —"; metrics.Location = new Point(20, 98); metrics.Size = new Size(520, 90); metrics.Font = new Font("Cascadia Mono", 9.5f); metrics.ForeColor = Green; result.Controls.Add(metrics);
         quality.Text = "WAITING"; quality.Location = new Point(780, 18); quality.Size = new Size(240, 32); quality.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold); quality.ForeColor = Muted; quality.TextAlign = ContentAlignment.TopRight; result.Controls.Add(quality);
-        graph.Size = new Size(520, 100); graph.Location = new Point(540, 70); graph.BackColor = Color.Transparent; result.Controls.Add(graph);
+        graph.Size = new Size(520, 100); graph.Location = new Point(540, 70); graph.BackColor = Surface; result.Controls.Add(graph);
         center.Controls.Add(result, 0, 2);
 
         var consoleCard = new GRLCard { Dock = DockStyle.Fill, Accent = Blue };
@@ -369,7 +369,7 @@ public sealed partial class DashboardForm : Form
 
 sealed class GRLHeader : Panel
 {
-    public GRLHeader() { DoubleBuffered = true; BackColor = Color.FromArgb(2, 5, 13); Paint += (_, e) => { using var b = new LinearGradientBrush(new Rectangle(0, ClientSize.Height - 4, ClientSize.Width, 4), Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), 0); e.Graphics.FillRectangle(b, 0, ClientSize.Height - 4, ClientSize.Width, 4); }; }
+    public GRLHeader() { DoubleBuffered = true; BackColor = Color.FromArgb(2, 5, 13); Paint += (_, e) => { using var b = new LinearGradientBrush(new Rectangle(0, ClientSize.Height - 4, ClientSize.Width, 4), Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal); e.Graphics.FillRectangle(b, 0, ClientSize.Height - 4, ClientSize.Width, 4); }; }
 }
 
 sealed class GRLCard : Panel
@@ -401,7 +401,7 @@ sealed class AnimatedProgress : Control
 {
     public int Value { get; set; } public float Phase { get; set; }
     public AnimatedProgress() { DoubleBuffered = true; }
-    protected override void OnPaint(PaintEventArgs e) { using var bg = new SolidBrush(Color.FromArgb(10, 18, 35)); e.Graphics.FillRectangle(bg, ClientRectangle); var w = (int)(ClientSize.Width * Math.Clamp(Value / 100f, 0, 1)); if (w > 0) { using var b = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(1, w), Height), Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), 0); e.Graphics.FillRectangle(b, 0, 0, w, Height); } }
+    protected override void OnPaint(PaintEventArgs e) { using var bg = new SolidBrush(Color.FromArgb(10, 18, 35)); e.Graphics.FillRectangle(bg, ClientRectangle); var w = (int)(ClientSize.Width * Math.Clamp(Value / 100f, 0, 1)); if (w > 0) { using var b = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(1, w), Height), Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal); e.Graphics.FillRectangle(b, 0, 0, w, Height); } }
 }
 
 sealed class AnimatedRadar : Control
@@ -415,3 +415,4 @@ sealed class AnimatedSparkline : Control
     public List<double> Values { get; set; } = new(); public float Phase { get; set; } public AnimatedSparkline() { DoubleBuffered = true; }
     protected override void OnPaint(PaintEventArgs e) { using var grid = new Pen(Color.FromArgb(20, 45, 70)); for (var y = 15; y < Height; y += 24) e.Graphics.DrawLine(grid, 0, y, Width, y); var v = Values.Count > 1 ? Values : Enumerable.Range(0, 10).Select(i => 55 + 10 * Math.Sin(i)).ToList(); var min = v.Min(); var max = v.Max(); var span = Math.Max(1, max - min); var pts = v.Select((x, i) => new PointF(i * (Width - 4f) / Math.Max(1, v.Count - 1) + 2, Height - 8 - (float)((x - min) / span) * (Height - 20))).ToArray(); using var pen = new Pen(Color.FromArgb(34, 240, 106), 2); if (pts.Length > 1) e.Graphics.DrawLines(pen, pts); foreach (var pt in pts) e.Graphics.FillEllipse(Brushes.Lime, pt.X - 2, pt.Y - 2, 4, 4); }
 }
+
