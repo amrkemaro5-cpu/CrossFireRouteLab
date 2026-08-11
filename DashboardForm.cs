@@ -122,135 +122,73 @@ public sealed partial class DashboardForm : Form
         return bar;
     }
 
-    void AddAction(Control parent, GRLIcon icon, string title, Func<Task> action, Color accent)
-    {
-        var b = new GRLActionButton(icon, title, accent) { Width = 106, Height = 76, Margin = new Padding(3, 0, 3, 0) };
-        b.Click += async (_, _) => await Safe(action);
-        actions.Add(b); parent.Controls.Add(b);
-    }
-
     Control BuildLeft()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Bg, RowCount = 2, ColumnCount = 1, Margin = Padding.Empty };
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 160));
-        var memoryCard = new GRLCard { Dock = DockStyle.Fill, Accent = Purple, Padding = new Padding(12) };
-        memoryCard.Controls.Add(Label("GAME MEMORY", new Point(14, 12), new Size(220, 25), 13, Purple, true));
-        memoryCard.Controls.Add(Label("YOUR LOCAL HISTORY", new Point(14, 37), new Size(220, 18), 8, Muted, true));
-        games.FlowDirection = FlowDirection.TopDown; games.WrapContents = false; games.AutoScroll = true; games.Dock = DockStyle.Fill; games.Padding = new Padding(0, 62, 0, 52); games.BackColor = Color.Transparent; memoryCard.Controls.Add(games);
-        var all = new GRLButton("VIEW ALL GAMES", Purple) { Height = 38, Dock = DockStyle.Bottom }; all.Click += (_, _) => AllGames(); memoryCard.Controls.Add(all);
-        root.Controls.Add(memoryCard, 0, 0);
-
-        var quick = new GRLCard { Dock = DockStyle.Fill, Accent = Cyan, Padding = new Padding(12) };
-        quick.Controls.Add(Label("QUICK ACTIONS", new Point(14, 10), new Size(220, 22), 12, Cyan, true));
-        AddQuick(quick, "CLEAR MEMORY", Purple, 39, () => { memory.Clear(); ClearStoredMemory(); RefreshMemory(); });
-        AddQuick(quick, "EXPORT ALL REPORTS", Cyan, 76, () => SaveReport().GetAwaiter().GetResult());
-        AddQuick(quick, "SETTINGS", Purple, 113, () => MessageBox.Show("Game Route Lab runs in READ-ONLY mode. It does not change router, DNS, PPPoE or Windows route settings.", "Game Route Lab", MessageBoxButtons.OK, MessageBoxIcon.Information));
-        root.Controls.Add(quick, 0, 1);
-        return root;
-    }
-
-    void AddQuick(Control parent, string text, Color accent, int y, Action action)
-    {
-        var b = new GRLButton(text, accent) { Location = new Point(14, y), Size = new Size(220, 32) }; b.Click += (_, _) => action(); parent.Controls.Add(b);
+        var panel = new GRLCard { Dock = DockStyle.Fill, Accent = Purple };
+        panel.Controls.Add(Label("GAME MEMORY", new Point(16, 14), new Size(220, 26), 12, Purple, true));
+        panel.Controls.Add(Label("YOUR LOCAL HISTORY", new Point(16, 39), new Size(220, 20), 8.5f, Muted, true));
+        games.Location = new Point(10, 66); games.Size = new Size(240, 510); games.FlowDirection = FlowDirection.TopDown; games.WrapContents = false; games.AutoScroll = true; games.BackColor = Color.Transparent; games.BorderStyle = BorderStyle.None; panel.Controls.Add(games);
+        var all = new GRLActionButton { Text = "VIEW ALL GAMES", Icon = GRLIcon.Gamepad, Accent = Cyan, Location = new Point(16, 588), Size = new Size(220, 38) }; all.Click += (_, _) => AllGames(); panel.Controls.Add(all);
+        var clear = new GRLActionButton { Text = "CLEAR MEMORY", Icon = GRLIcon.Trash, Accent = Purple, Location = new Point(16, 636), Size = new Size(220, 38) }; clear.Click += (_, _) => ClearStoredMemory(); panel.Controls.Add(clear);
+        return panel;
     }
 
     Control BuildCenter()
     {
-        var center = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Bg, ColumnCount = 1, RowCount = 4, Margin = Padding.Empty };
-        center.RowStyles.Add(new RowStyle(SizeType.Percent, 30)); center.RowStyles.Add(new RowStyle(SizeType.Percent, 27)); center.RowStyles.Add(new RowStyle(SizeType.Percent, 25)); center.RowStyles.Add(new RowStyle(SizeType.Percent, 18));
-        center.Controls.Add(BuildHero(), 0, 0); center.Controls.Add(BuildSummary(), 0, 1); center.Controls.Add(BuildBest(), 0, 2); center.Controls.Add(BuildConsole(), 0, 3);
+        var center = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Bg, RowCount = 4, ColumnCount = 1, Margin = Padding.Empty };
+        center.RowStyles.Add(new RowStyle(SizeType.Absolute, 205));
+        center.RowStyles.Add(new RowStyle(SizeType.Absolute, 205));
+        center.RowStyles.Add(new RowStyle(SizeType.Absolute, 210));
+        center.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var hero = new GRLCard { Dock = DockStyle.Fill, Accent = Purple };
+        radar.Size = new Size(150, 150); radar.Location = new Point(18, 27); radar.BackColor = Color.Transparent; hero.Controls.Add(radar);
+        analysisTitle.Text = "AUTO ANALYSIS READY"; analysisTitle.Location = new Point(190, 18); analysisTitle.Size = new Size(620, 36); analysisTitle.Font = new Font("Segoe UI Semibold", 21, FontStyle.Bold); analysisTitle.ForeColor = Purple; hero.Controls.Add(analysisTitle);
+        var sub = Label("Detecting the game, connections and route quality automatically...", new Point(190, 58), new Size(760, 24), 10.5f, Muted); hero.Controls.Add(sub);
+        progress.Location = new Point(190, 90); progress.Size = new Size(780, 14); hero.Controls.Add(progress);
+        progressText.Text = "READY"; progressText.Location = new Point(990, 84); progressText.Size = new Size(70, 24); progressText.ForeColor = TextColor; progressText.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold); hero.Controls.Add(progressText);
+        var steps = new[] { "DETECT GAME", "FIND CONNECTIONS", "TEST ENDPOINTS", "ANALYZE ROUTES", "GENERATE REPORT" };
+        for (var i = 0; i < steps.Length; i++) hero.Controls.Add(Label($"{i + 1}", new Point(225 + i * 135, 126), new Size(24, 24), 9, i < 3 ? Green : i == 3 ? Purple : Muted, true, ContentAlignment.MiddleCenter));
+        for (var i = 0; i < steps.Length; i++) hero.Controls.Add(Label(steps[i], new Point(195 + i * 135, 154), new Size(100, 28), 7.5f, TextColor, true, ContentAlignment.MiddleCenter));
+        center.Controls.Add(hero, 0, 0);
+
+        var summary = new GRLCard { Dock = DockStyle.Fill, Accent = Cyan };
+        summary.Controls.Add(Label("CURRENT ANALYSIS SUMMARY", new Point(18, 14), new Size(400, 28), 12, Cyan, true));
+        gameName.Text = "No game detected"; gameName.Location = new Point(20, 56); gameName.Size = new Size(500, 34); gameName.Font = new Font("Segoe UI Semibold", 17, FontStyle.Bold); gameName.ForeColor = TextColor; summary.Controls.Add(gameName);
+        gameMeta.Text = "Start an online game and run AUTO ANALYZE again."; gameMeta.Location = new Point(20, 94); gameMeta.Size = new Size(520, 80); gameMeta.ForeColor = Muted; summary.Controls.Add(gameMeta);
+        connections.Text = "No public game endpoints found yet."; connections.Location = new Point(550, 56); connections.Size = new Size(500, 120); connections.ForeColor = TextColor; connections.Font = new Font("Cascadia Mono", 9); summary.Controls.Add(connections);
+        center.Controls.Add(summary, 0, 1);
+
+        var result = new GRLCard { Dock = DockStyle.Fill, Accent = Green };
+        result.Controls.Add(Label("BEST ENDPOINT (CURRENT)", new Point(18, 14), new Size(400, 28), 12, Cyan, true));
+        best.Text = "—"; best.Location = new Point(20, 52); best.Size = new Size(520, 42); best.Font = new Font("Segoe UI Semibold", 15, FontStyle.Bold); best.ForeColor = TextColor; result.Controls.Add(best);
+        metrics.Text = "LATENCY     — ms\r\nLOSS        —\r\nJITTER      — ms\r\nSTABILITY   —"; metrics.Location = new Point(20, 98); metrics.Size = new Size(520, 90); metrics.Font = new Font("Cascadia Mono", 9.5f); metrics.ForeColor = Green; result.Controls.Add(metrics);
+        quality.Text = "WAITING"; quality.Location = new Point(780, 18); quality.Size = new Size(240, 32); quality.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold); quality.ForeColor = Muted; quality.TextAlign = ContentAlignment.TopRight; result.Controls.Add(quality);
+        graph.Size = new Size(520, 100); graph.Location = new Point(540, 70); graph.BackColor = Color.Transparent; result.Controls.Add(graph);
+        center.Controls.Add(result, 0, 2);
+
+        var consoleCard = new GRLCard { Dock = DockStyle.Fill, Accent = Blue };
+        consoleCard.Controls.Add(Label("LIVE ANALYSIS CONSOLE", new Point(18, 12), new Size(400, 26), 11, Cyan, true));
+        console.Dock = DockStyle.Fill; console.Location = new Point(12, 42); console.BackColor = Color.FromArgb(1, 4, 10); console.ForeColor = TextColor; console.BorderStyle = BorderStyle.None; console.ReadOnly = true; console.WordWrap = false; console.ScrollBars = RichTextBoxScrollBars.Both; console.Font = new Font("Cascadia Mono", 9); consoleCard.Controls.Add(console);
+        center.Controls.Add(consoleCard, 0, 3);
         return center;
-    }
-
-    Control BuildHero()
-    {
-        var card = new GRLCard { Dock = DockStyle.Fill, Accent = Purple, Padding = new Padding(12) };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Color.Transparent, Margin = Padding.Empty };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 155)); layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        radar.Dock = DockStyle.Fill; radar.Margin = new Padding(4, 4, 8, 4); layout.Controls.Add(radar, 0, 0);
-
-        var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, BackColor = Color.Transparent, Margin = Padding.Empty };
-        right.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 25)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 20)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        analysisTitle.Text = "AUTO ANALYSIS READY"; analysisTitle.Dock = DockStyle.Fill; analysisTitle.Font = new Font("Segoe UI Semibold", 19, FontStyle.Bold); analysisTitle.ForeColor = Purple; right.Controls.Add(analysisTitle, 0, 0);
-        var subtitle = Label("Detecting the game, connections and route quality automatically...", Point.Empty, Size.Empty, 9.5f, Muted); subtitle.Dock = DockStyle.Fill; right.Controls.Add(subtitle, 0, 1);
-
-        var progressRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Color.Transparent };
-        progressRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); progressRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 60));
-        progress.Dock = DockStyle.Fill; progress.Margin = new Padding(0, 3, 10, 3); progressRow.Controls.Add(progress, 0, 0);
-        progressText.Text = "READY"; progressText.Dock = DockStyle.Fill; progressText.TextAlign = ContentAlignment.MiddleRight; progressText.Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold); progressText.ForeColor = TextColor; progressRow.Controls.Add(progressText, 1, 0);
-        right.Controls.Add(progressRow, 0, 2);
-
-        var stages = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, BackColor = Color.Transparent, Padding = new Padding(0, 4, 0, 0), AutoScroll = true };
-        stages.Controls.Add(new GRLStage("1", "DETECT GAME", Green)); stages.Controls.Add(new GRLStage("2", "FIND CONNECTIONS", Green)); stages.Controls.Add(new GRLStage("3", "TEST ENDPOINTS", Green)); stages.Controls.Add(new GRLStage("4", "ANALYZE ROUTES", Purple)); stages.Controls.Add(new GRLStage("5", "GENERATE REPORT", Muted));
-        right.Controls.Add(stages, 0, 3);
-        layout.Controls.Add(right, 1, 0); card.Controls.Add(layout); return card;
-    }
-
-    Control BuildSummary()
-    {
-        var card = new GRLCard { Dock = DockStyle.Fill, Accent = Cyan, Padding = new Padding(12) };
-        card.Controls.Add(Label("CURRENT ANALYSIS SUMMARY", new Point(14, 10), new Size(500, 25), 13, Cyan, true));
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = Color.Transparent, Padding = new Padding(0, 36, 0, 0) };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-
-        var active = new GRLInnerCard { Dock = DockStyle.Fill, Accent = Cyan, Margin = new Padding(2, 0, 6, 2) };
-        active.Controls.Add(Label("ACTIVE GAME", new Point(16, 12), new Size(250, 22), 11, Cyan, true));
-        gameName.Text = "No game detected"; gameName.Location = new Point(16, 43); gameName.Size = new Size(360, 28); gameName.Font = new Font("Segoe UI Semibold", 14.5f, FontStyle.Bold); active.Controls.Add(gameName);
-        gameMeta.Text = "Start an online game and click AUTO ANALYZE"; gameMeta.Location = new Point(16, 76); gameMeta.Size = new Size(390, 70); gameMeta.ForeColor = Muted; active.Controls.Add(gameMeta); layout.Controls.Add(active, 0, 0);
-
-        var conn = new GRLInnerCard { Dock = DockStyle.Fill, Accent = Cyan, Margin = new Padding(6, 0, 2, 2) };
-        conn.Controls.Add(Label("CONNECTIONS DISCOVERED", new Point(16, 12), new Size(360, 22), 11, Cyan, true));
-        connections.Text = "No endpoints discovered yet.\r\n\r\nAUTO ANALYZE will find public connections for the active game automatically."; connections.Location = new Point(16, 44); connections.Size = new Size(430, 110); connections.ForeColor = Muted; connections.Font = new Font("Cascadia Mono", 8.8f); conn.Controls.Add(connections); layout.Controls.Add(conn, 1, 0);
-        card.Controls.Add(layout); return card;
-    }
-
-    Control BuildBest()
-    {
-        var row = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Bg, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55)); row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-        var bestCard = new GRLCard { Dock = DockStyle.Fill, Accent = Cyan, Padding = new Padding(14), Margin = new Padding(0, 2, 5, 0) };
-        bestCard.Controls.Add(Label("BEST ENDPOINT (CURRENT)", new Point(14, 10), new Size(360, 24), 12, Cyan, true));
-        best.Text = "—"; best.Location = new Point(14, 42); best.Size = new Size(520, 29); best.Font = new Font("Segoe UI Semibold", 15, FontStyle.Bold); bestCard.Controls.Add(best);
-        metrics.Text = "LATENCY     — ms\r\nLOSS        —\r\nJITTER      — ms\r\nSTABILITY   —"; metrics.Location = new Point(14, 76); metrics.Size = new Size(330, 82); metrics.Font = new Font("Segoe UI Semibold", 9.8f, FontStyle.Bold); metrics.ForeColor = Green; bestCard.Controls.Add(metrics); row.Controls.Add(bestCard, 0, 0);
-
-        var qualityCard = new GRLCard { Dock = DockStyle.Fill, Accent = Green, Padding = new Padding(14), Margin = new Padding(5, 2, 0, 0) };
-        qualityCard.Controls.Add(Label("ROUTE QUALITY", new Point(14, 10), new Size(220, 24), 12, Cyan, true));
-        quality.Text = "WAITING"; quality.Dock = DockStyle.Top; quality.Height = 24; quality.TextAlign = ContentAlignment.MiddleRight; quality.Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold); quality.ForeColor = Muted; qualityCard.Controls.Add(quality);
-        graph.Dock = DockStyle.Fill; graph.Margin = new Padding(0, 38, 0, 26); qualityCard.Controls.Add(graph);
-        var qfoot = Label("Hops: —   |   Avg Latency: —", Point.Empty, Size.Empty, 8.5f, Muted); qfoot.Dock = DockStyle.Bottom; qfoot.Height = 20; qualityCard.Controls.Add(qfoot);
-        row.Controls.Add(qualityCard, 1, 0); return row;
-    }
-
-    Control BuildConsole()
-    {
-        var card = new GRLCard { Dock = DockStyle.Fill, Accent = Blue, Padding = new Padding(10) };
-        card.Controls.Add(Label("LIVE ANALYSIS CONSOLE", new Point(14, 7), new Size(360, 22), 10.5f, Cyan, true));
-        console.Location = new Point(10, 34); console.Size = new Size(700, 100); console.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right; console.BackColor = Color.FromArgb(1, 4, 10); console.ForeColor = TextColor; console.BorderStyle = BorderStyle.None; console.Font = new Font("Cascadia Mono", 8.2f); console.ReadOnly = true; console.WordWrap = false; card.Controls.Add(console); return card;
     }
 
     Control BuildRight()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Bg, RowCount = 3, ColumnCount = 1, Margin = Padding.Empty };
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 31)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 34)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 35));
-        var n = new GRLCard { Dock = DockStyle.Fill, Accent = Cyan, Padding = new Padding(12), Margin = new Padding(0, 0, 0, 5) };
-        n.Controls.Add(Label("NETWORK INFORMATION", new Point(14, 12), new Size(280, 24), 11.5f, Cyan, true));
-        network.Text = "ISP\t—\r\nASN\t—\r\nPublic IP\t—\r\nLocation\t—\r\nConnection\t—\r\nDNS\t—"; network.Location = new Point(16, 47); network.Size = new Size(280, 150); network.Font = new Font("Segoe UI", 9.2f); n.Controls.Add(network); root.Controls.Add(n, 0, 0);
-        var r = new GRLCard { Dock = DockStyle.Fill, Accent = Purple, Padding = new Padding(12), Margin = new Padding(0, 2, 0, 5) };
-        r.Controls.Add(Label("ROUTER INTELLIGENCE", new Point(14, 12), new Size(280, 24), 11.5f, Purple, true));
-        router.Text = "Gateway\t—\r\nManufacturer\t—\r\nModel\t—\r\nFirmware\t—\r\nInterface\t—\r\nConfidence\t—"; router.Location = new Point(16, 47); router.Size = new Size(285, 190); router.Font = new Font("Segoe UI", 9.2f); r.Controls.Add(router); root.Controls.Add(r, 0, 1);
-        var z = new GRLCard { Dock = DockStyle.Fill, Accent = Purple, Padding = new Padding(12) };
-        z.Controls.Add(Label("TIPS", new Point(14, 12), new Size(280, 24), 11.5f, Purple, true));
-        tips.Text = "Run analysis while the game is in an online match.\r\n\r\nMore observations = better local memory.\r\n\r\nICMP-blocked servers are not automatically treated as packet loss.\r\n\r\nThe analyzer never changes your router or Windows routes."; tips.Location = new Point(16, 47); tips.Size = new Size(285, 250); tips.ForeColor = Muted; tips.Font = new Font("Segoe UI", 9.1f); z.Controls.Add(tips); root.Controls.Add(z, 0, 2);
-        return root;
+        var right = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Bg, RowCount = 3, ColumnCount = 1, Margin = Padding.Empty };
+        right.RowStyles.Add(new RowStyle(SizeType.Absolute, 220)); right.RowStyles.Add(new RowStyle(SizeType.Absolute, 220)); right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        right.Controls.Add(new GRLInfoCard { Dock = DockStyle.Fill, Accent = Cyan, Title = "NETWORK INFORMATION", Content = "Waiting for network detection…" }, 0, 0);
+        right.Controls.Add(new GRLInfoCard { Dock = DockStyle.Fill, Accent = Purple, Title = "ROUTER INTELLIGENCE", Content = "Waiting for router detection…" }, 0, 1);
+        right.Controls.Add(new GRLInfoCard { Dock = DockStyle.Fill, Accent = Green, Title = "TIPS", Content = "Run analysis while the game is in an online match.\r\n\r\nMore observations improve local game memory.\r\n\r\nICMP-blocked servers are not automatically treated as packet loss.\r\n\r\nThe analyzer never changes your router or Windows routes." }, 0, 2);
+        return right;
     }
 
     Control BuildFooter()
     {
-        var p = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(2, 6, 15) };
-        p.Controls.Add(Label("Game Route Lab v7.0  •  READ-ONLY MODE", new Point(18, 8), new Size(300, 22), 9.2f, Green, true));
-        systemText.Text = "SYSTEM: Windows 64-bit"; systemText.AutoSize = true; systemText.Location = new Point(330, 8); systemText.ForeColor = Cyan; p.Controls.Add(systemText);
-        var ready = Label("●  READY", Point.Empty, new Size(90, 22), 9.2f, Green, true, ContentAlignment.MiddleRight); p.Controls.Add(ready); p.Resize += (_, _) => ready.Location = new Point(p.ClientSize.Width - ready.Width - 18, 8);
-        return p;
+        var p = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(3, 7, 16) };
+        p.Controls.Add(Label("Game Route Lab v7.0  •  READ-ONLY MODE", new Point(18, 8), new Size(300, 22), 9.2f, Green, true)); p.Controls.Add(Label("SYSTEM: Windows 64-bit", new Point(330, 8), new Size(250, 22), 9.2f, Cyan, true));
+        var ready = Label("●  READY", Point.Empty, new Size(90, 22), 9.2f, Green, true, ContentAlignment.MiddleRight); p.Controls.Add(ready); p.Resize += (_, _) => ready.Location = new Point(p.ClientSize.Width - ready.Width - 18, 8); return p;
     }
 
     Label Label(string text, Point location, Size size, float font, Color color, bool bold = false, ContentAlignment align = ContentAlignment.TopLeft)
@@ -324,7 +262,7 @@ public sealed partial class DashboardForm : Form
     async Task FindConnections()
     {
         var found = await GameScanner.DiscoverAsync(); var game = found.FirstOrDefault(x => x.LikelyGame); if (game == null) { Log("No high-confidence game connection found. ChatGPT and browser processes are excluded."); return; }
-        var eps = await GetEndpoints(game.Pid); connections.Text = eps.Count == 0 ? "No public established sockets visible." : string.Join("\r\n", eps.Select(x => $"{x.Protocol}  {x.RemoteIp}:{x.RemotePort}   {x.State}")); foreach (var ep in eps) Log($"{ep.Protocol} {ep.RemoteIp}:{ep.RemotePort} {ep.State}");
+        var eps = await GetEndpoints(game.Pid); connections.Text = eps.Count == 0 ? "Game detected, but no public established sockets visible." : string.Join("\r\n", eps.Select(x => $"{x.Protocol}  {x.RemoteIp}:{x.RemotePort}   {x.State}")); foreach (var ep in eps) Log($"{ep.Protocol} {ep.RemoteIp}:{ep.RemotePort} {ep.State}");
     }
 
     async Task RouteTable() => Log("\r\n=== ROUTE TABLE ===\r\n" + await Run("route.exe", "print", 10000));
@@ -353,7 +291,12 @@ public sealed partial class DashboardForm : Form
 
     async Task<List<GameEndpoint>> GetEndpoints(int pid)
     {
-        var all = await GameScanner.DiscoverAsync(); return all.Where(x => x.Pid == pid && x.LikelyGame).GroupBy(x => $"{x.Protocol}|{x.RemoteIp}|{x.RemotePort}").Select(g => g.First()).ToList();
+        var all = await GameScanner.DiscoverAsync();
+        return all
+            .Where(x => x.Pid == pid && x.LikelyGame && x.RemotePort > 0 && IPAddress.TryParse(x.RemoteIp, out var ip) && ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+            .GroupBy(x => $"{x.Protocol}|{x.RemoteIp}|{x.RemotePort}")
+            .Select(g => g.First())
+            .ToList();
     }
 
     async Task<ProbeResult> Probe(string host)
@@ -410,154 +353,65 @@ public sealed partial class DashboardForm : Form
 
     void ClearStoredMemory()
     {
-        try { var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameRouteLab"); var file = Path.Combine(root, "profiles.json"); if (File.Exists(file)) File.Delete(file); } catch { }
+        try { var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameRouteLab"); var file = Path.Combine(root, "profiles.json"); if (File.Exists(file)) File.Delete(file); memory.Clear(); current = null; RefreshMemory(); Log("Game memory cleared."); } catch (Exception ex) { Log("[ERROR] " + ex.Message); }
     }
 
-    void Log(string text)
-    {
-        if (console.InvokeRequired) { console.BeginInvoke(() => Log(text)); return; }
-        console.AppendText(text + Environment.NewLine); console.SelectionStart = console.TextLength; console.ScrollToCaret();
-    }
+    void Log(string text) { if (InvokeRequired) { BeginInvoke(() => Log(text)); return; } console.AppendText(text + Environment.NewLine); console.SelectionStart = console.TextLength; console.ScrollToCaret(); }
 
-    record ProbeResult(double Avg, double Loss, double Jitter, List<double> History, bool HasResponse);
-    record TraceResult(int Hops, double Last);
-    record RouteResult(GameEndpoint Endpoint, ProbeResult Probe, TraceResult Trace)
+    record struct RouteResult(GameEndpoint Endpoint, ProbeResult Probe, TraceResult Trace)
     {
-        public double Score => Probe.HasResponse ? Math.Min(200, Probe.Avg + Probe.Loss * 2 + Trace.Hops * 0.5 + Probe.Jitter * 0.35) : 80 + Trace.Hops * 0.5;
-        public string Stability => !Probe.HasResponse ? "Unknown" : Probe.Loss == 0 && Probe.Avg < 80 && Probe.Jitter < 12 ? "Excellent" : Probe.Loss < 20 && Probe.Avg < 150 ? "Good" : "Variable";
+        public double Score => (Probe.Avg > 0 ? Probe.Avg : 999) + Trace.Hops * 2;
+        public string Stability => Probe.HasResponse ? (Probe.Avg < 50 && Probe.Jitter < 8 ? "Excellent" : Probe.Avg < 80 ? "Good" : "Fair") : "Unknown";
     }
+    record struct ProbeResult(double Avg, double Loss, double Jitter, List<double> History, bool HasResponse);
+    record struct TraceResult(int Hops, double Last);
 }
-
-enum GRLIcon { Radar, Gamepad, Network, Router, Search, Route, Ping, Trace, Chart, Report }
 
 sealed class GRLHeader : Panel
 {
-    protected override void OnPaintBackground(PaintEventArgs e)
-    {
-        using var b = new LinearGradientBrush(ClientRectangle, Color.FromArgb(1, 3, 9), Color.FromArgb(4, 8, 20), LinearGradientMode.Horizontal); e.Graphics.FillRectangle(b, ClientRectangle);
-        using var line = new LinearGradientBrush(new Rectangle(0, Height - 4, Width, 4), Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal); e.Graphics.FillRectangle(line, 0, Height - 4, Width, 4);
-    }
+    public GRLHeader() { DoubleBuffered = true; BackColor = Color.FromArgb(2, 5, 13); Paint += (_, e) => { using var b = new LinearGradientBrush(new Rectangle(0, ClientSize.Height - 4, ClientSize.Width, 4), Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), 0); e.Graphics.FillRectangle(b, 0, ClientSize.Height - 4, ClientSize.Width, 4); }; }
 }
 
 sealed class GRLCard : Panel
 {
-    public Color Accent { get; set; } = Color.FromArgb(0, 224, 255);
-    public GRLCard() { DoubleBuffered = true; BackColor = Color.FromArgb(5, 10, 21); }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); if (Width < 4 || Height < 4) return; e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var fill = new LinearGradientBrush(ClientRectangle, Color.FromArgb(7, 14, 29), Color.FromArgb(3, 8, 18), LinearGradientMode.Vertical); e.Graphics.FillRectangle(fill, ClientRectangle);
-        using var p = new Pen(Color.FromArgb(90, Accent.R, Accent.G, Accent.B), 1); e.Graphics.DrawRectangle(p, 1, 1, Width - 3, Height - 3);
-        using var glow = new Pen(Color.FromArgb(32, Accent.R, Accent.G, Accent.B), 2); e.Graphics.DrawLine(glow, 12, 2, Math.Min(220, Width - 12), 2);
-    }
+    public Color Accent { get; set; }
+    public GRLCard() { DoubleBuffered = true; BackColor = Color.FromArgb(6, 12, 25); Padding = Padding.Empty; Paint += (_, e) => { using var p = new Pen(Color.FromArgb(16, 54, 88)); e.Graphics.DrawRectangle(p, 0, 0, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)); using var a = new Pen(Color.FromArgb(Accent.R, Accent.G, Accent.B, 130)); e.Graphics.DrawLine(a, 0, 0, ClientSize.Width, 0); }; }
 }
 
-sealed class GRLInnerCard : Panel
+sealed class GRLInfoCard : Panel
 {
-    public Color Accent { get; set; } = Color.FromArgb(0, 224, 255);
-    public GRLInnerCard() { DoubleBuffered = true; BackColor = Color.FromArgb(7, 16, 31); }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); using var fill = new SolidBrush(Color.FromArgb(7, 16, 31)); e.Graphics.FillRectangle(fill, ClientRectangle); using var p = new Pen(Color.FromArgb(70, Accent.R, Accent.G, Accent.B)); e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
-    }
-}
-
-sealed class GRLButton : Button
-{
-    public GRLButton(string text, Color accent)
-    {
-        Text = text; FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 1; FlatAppearance.BorderColor = Color.FromArgb(110, accent.R, accent.G, accent.B); FlatAppearance.MouseOverBackColor = Color.FromArgb(22, 18, 42); BackColor = Color.FromArgb(6, 13, 27); ForeColor = Color.White; Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold); Cursor = Cursors.Hand;
-    }
-}
-
-sealed class GRLActionButton : Panel
-{
-    readonly GRLIcon icon; readonly string title; readonly Color accent; bool hover;
-    public float Phase { get; set; }
-    public GRLActionButton(GRLIcon icon, string title, Color accent) { this.icon = icon; this.title = title; this.accent = accent; BackColor = Color.FromArgb(4, 10, 21); Cursor = Cursors.Hand; DoubleBuffered = true; MouseEnter += (_, _) => { hover = true; Invalidate(); }; MouseLeave += (_, _) => { hover = false; Invalidate(); }; }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; using var fill = new SolidBrush(hover ? Color.FromArgb(14, 18, 38) : Color.FromArgb(4, 10, 21)); e.Graphics.FillRectangle(fill, ClientRectangle); using var border = new Pen(Color.FromArgb(hover ? 170 : 65, accent.R, accent.G, accent.B), hover ? 1.5f : 1); e.Graphics.DrawRectangle(border, 1, 1, Width - 3, Height - 3); DrawIcon(e.Graphics);
-        using var f = new Font("Segoe UI Semibold", 7.4f, FontStyle.Bold); using var b = new SolidBrush(Color.FromArgb(242, 248, 255)); var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }; e.Graphics.DrawString(title, f, b, new RectangleF(4, 43, Width - 8, 29), sf);
-    }
-    void DrawIcon(Graphics g)
-    {
-        using var p = new Pen(accent, 2) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round }; using var thin = new Pen(Color.FromArgb(145, accent.R, accent.G, accent.B), 1.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round }; var cx = Width / 2; var cy = 23;
-        switch (icon)
-        {
-            case GRLIcon.Radar: g.DrawEllipse(p, cx - 11, cy - 11, 22, 22); g.DrawEllipse(thin, cx - 6, cy - 6, 12, 12); g.DrawLine(thin, cx, cy - 16, cx, cy + 16); g.DrawLine(thin, cx - 16, cy, cx + 16, cy); break;
-            case GRLIcon.Gamepad: g.DrawArc(p, cx - 16, cy - 9, 18, 18, 180, 180); g.DrawArc(p, cx - 2, cy - 9, 18, 18, 180, 180); g.DrawLine(p, cx - 10, cy, cx - 10, cy + 8); g.DrawLine(p, cx - 14, cy + 4, cx - 6, cy + 4); g.FillEllipse(new SolidBrush(accent), cx + 7, cy - 2, 3, 3); g.FillEllipse(new SolidBrush(accent), cx + 13, cy - 2, 3, 3); break;
-            case GRLIcon.Network: g.DrawLine(p, cx, cy - 10, cx - 13, cy + 5); g.DrawLine(p, cx, cy - 10, cx + 13, cy + 5); g.DrawLine(p, cx - 13, cy + 5, cx + 13, cy + 5); g.FillEllipse(new SolidBrush(accent), cx - 3, cy - 13, 6, 6); g.DrawEllipse(p, cx - 16, cy + 3, 6, 6); g.DrawEllipse(p, cx + 10, cy + 3, 6, 6); break;
-            case GRLIcon.Router: g.DrawRectangle(p, cx - 15, cy - 4, 30, 12); g.DrawLine(p, cx - 8, cy - 4, cx - 8, cy - 14); g.DrawLine(p, cx + 8, cy - 4, cx + 8, cy - 14); g.DrawArc(thin, cx - 15, cy - 19, 30, 18, 210, 120); break;
-            case GRLIcon.Search: g.DrawEllipse(p, cx - 12, cy - 12, 20, 20); g.DrawLine(p, cx + 4, cy + 4, cx + 15, cy + 15); break;
-            case GRLIcon.Route: g.DrawBezier(p, cx - 16, cy - 8, cx - 3, cy + 8, cx + 3, cy - 8, cx + 16, cy + 8); g.FillEllipse(new SolidBrush(accent), cx - 18, cy - 10, 5, 5); g.FillEllipse(new SolidBrush(accent), cx + 14, cy + 6, 5, 5); break;
-            case GRLIcon.Ping: g.DrawEllipse(p, cx - 12, cy - 12, 24, 24); g.DrawLine(p, cx, cy, cx + 10, cy - 6); g.DrawLine(p, cx, cy, cx, cy - 10); break;
-            case GRLIcon.Trace: for (var i = 0; i < 3; i++) { var x = cx - 14 + i * 14; g.FillEllipse(new SolidBrush(accent), x, cy - 3 + i * 4, 5, 5); if (i < 2) g.DrawLine(thin, x + 5, cy - 1 + i * 4, x + 12, cy + 2 + i * 4); } break;
-            case GRLIcon.Chart: g.DrawLine(p, cx - 15, cy + 10, cx - 15, cy - 10); g.DrawLine(p, cx - 5, cy + 10, cx - 5, cy - 2); g.DrawLine(p, cx + 5, cy + 10, cx + 5, cy - 14); g.DrawLine(p, cx + 15, cy + 10, cx + 15, cy - 6); break;
-            case GRLIcon.Report: g.DrawRectangle(p, cx - 10, cy - 14, 20, 28); g.DrawLine(thin, cx - 5, cy - 5, cx + 6, cy - 5); g.DrawLine(thin, cx - 5, cy + 1, cx + 6, cy + 1); g.DrawLine(thin, cx - 5, cy + 7, cx + 3, cy + 7); break;
-        }
-    }
-}
-
-sealed class GRLStage : Panel
-{
-    readonly string number, title; readonly Color accent;
-    public GRLStage(string number, string title, Color accent) { this.number = number; this.title = title; this.accent = accent; Width = 118; Height = 58; Margin = new Padding(0, 0, 8, 0); BackColor = Color.Transparent; DoubleBuffered = true; }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; using var line = new Pen(Color.FromArgb(75, 55, 90), 1); e.Graphics.DrawLine(line, 0, 16, Width - 1, 16); using var b = new SolidBrush(accent); e.Graphics.FillEllipse(b, 49, 6, 20, 20); using var f = new Font("Segoe UI Semibold", 8, FontStyle.Bold); using var dark = new SolidBrush(Color.FromArgb(3, 8, 16)); var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }; e.Graphics.DrawString(number, f, dark, new RectangleF(49, 6, 20, 20), sf); using var tf = new Font("Segoe UI Semibold", 7.2f, FontStyle.Bold); using var white = new SolidBrush(Color.FromArgb(230, 240, 255)); e.Graphics.DrawString(title, tf, white, new RectangleF(0, 30, Width, 25), sf);
-    }
-}
-
-sealed class GameMemoryItem : Panel
-{
-    readonly GameProfile profile; readonly Color good, accent;
-    public GameMemoryItem(GameProfile profile, Color good, Color accent) { this.profile = profile; this.good = good; this.accent = accent; BackColor = Color.FromArgb(7, 15, 29); Cursor = Cursors.Hand; DoubleBuffered = true; }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); using var border = new Pen(profile.LastScore >= 70 ? good : Color.FromArgb(25, 63, 93), 1); e.Graphics.DrawRectangle(border, 0, 0, Width - 1, Height - 1); using var iconBrush = new SolidBrush(Color.FromArgb(2, 7, 14)); e.Graphics.FillRectangle(iconBrush, 8, 9, 54, 54);
-        try { if (File.Exists(profile.IconPath)) { using var img = Image.FromFile(profile.IconPath); e.Graphics.DrawImage(img, new Rectangle(9, 10, 52, 52)); } } catch { }
-        using var nameFont = new Font("Segoe UI Semibold", 9.2f, FontStyle.Bold); using var infoFont = new Font("Segoe UI", 8.1f); e.Graphics.DrawString(profile.DisplayName, nameFont, Brushes.White, new RectangleF(72, 8, Math.Max(80, Width - 78), 22)); var info = $"{profile.Observations} analyses\r\nBest: {(string.IsNullOrWhiteSpace(profile.LastBestEndpoint) ? "—" : profile.LastBestEndpoint)}"; using var infoBrush = new SolidBrush(profile.LastScore >= 70 ? good : Color.FromArgb(135, 159, 190)); e.Graphics.DrawString(info, infoFont, infoBrush, new RectangleF(72, 31, Math.Max(80, Width - 78), 38)); using var dot = new SolidBrush(profile.LastScore >= 70 ? good : accent); e.Graphics.FillEllipse(dot, Math.Max(Width - 18, 70), 10, 7, 7);
-    }
+    public string Title { get; set; } = ""; public string Content { get; set; } = ""; public Color Accent { get; set; }
+    public GRLInfoCard() { DoubleBuffered = true; BackColor = Color.FromArgb(6, 12, 25); Paint += (_, e) => { using var p = new Pen(Color.FromArgb(16, 54, 88)); e.Graphics.DrawRectangle(p, 0, 0, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)); using var b = new SolidBrush(Accent); e.Graphics.DrawString(Title, new Font("Segoe UI Semibold", 11, FontStyle.Bold), b, 16, 15); using var t = new SolidBrush(Color.FromArgb(205, 220, 238)); e.Graphics.DrawString(Content, new Font("Cascadia Mono", 8.8f), t, new RectangleF(16, 48, ClientSize.Width - 32, ClientSize.Height - 58)); }; }
 }
 
 sealed class GRLStatus : Panel
 {
-    public Color Accent { get; set; } = Color.LimeGreen; public string Title { get; set; } = "SYSTEM"; public string Value { get; set; } = "READY";
-    public GRLStatus() { BackColor = Color.FromArgb(5, 11, 23); DoubleBuffered = true; }
-    protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); using var p = new Pen(Color.FromArgb(90, Accent.R, Accent.G, Accent.B)); e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1); using var f = new Font("Segoe UI", 7.5f, FontStyle.Bold); using var v = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold); using var b = new SolidBrush(Color.FromArgb(135, 159, 190)); using var vb = new SolidBrush(Accent); e.Graphics.DrawString(Title, f, b, 14, 9); e.Graphics.DrawString("●  " + Value, v, vb, 14, 33); }
+    public string Title { get; set; } = ""; public string Value { get; set; } = ""; public Color Accent { get; set; }
+    public GRLStatus() { BackColor = Color.FromArgb(4, 10, 20); Paint += (_, e) => { using var p = new Pen(Color.FromArgb(25, 75, 95)); e.Graphics.DrawRectangle(p, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1); using var b = new SolidBrush(Color.FromArgb(155, 175, 200)); e.Graphics.DrawString(Title, new Font("Segoe UI", 8), b, 14, 12); using var a = new SolidBrush(Accent); e.Graphics.DrawString("●  " + Value, new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold), a, 14, 35); }; }
+}
+
+sealed class GRLActionButton : Button
+{
+    public object Icon { get; set; } = GRLIcon.Gamepad; public Color Accent { get; set; } = Color.White; public float Phase { get; set; }
+    public GRLActionButton() { FlatStyle = FlatStyle.Flat; FlatAppearance.BorderColor = Color.FromArgb(20, 60, 95); FlatAppearance.MouseOverBackColor = Color.FromArgb(12, 28, 52); BackColor = Color.FromArgb(5, 12, 24); ForeColor = Color.FromArgb(230, 240, 250); Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold); Cursor = Cursors.Hand; DoubleBuffered = true; }
+    protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); using var p = new Pen(Color.FromArgb(Accent.R, Accent.G, Accent.B, 160), 1); e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1); }
 }
 
 sealed class AnimatedProgress : Control
 {
     public int Value { get; set; } public float Phase { get; set; }
-    public AnimatedProgress() { DoubleBuffered = true; BackColor = Color.FromArgb(2, 6, 15); }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); if (Width < 2) return; var r = new Rectangle(0, 3, Width - 1, Math.Max(5, Height - 6)); using var bg = new SolidBrush(Color.FromArgb(16, 25, 45)); e.Graphics.FillRectangle(bg, r); var w = (int)(r.Width * Math.Clamp(Value, 0, 100) / 100.0); if (w <= 0) return; using var grad = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(1, w), r.Height), Color.FromArgb(163, 62, 255), Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal); e.Graphics.FillRectangle(grad, new Rectangle(0, r.Y, w, r.Height)); var gx = (int)((Math.Sin(Phase * 2) * .5 + .5) * Math.Max(1, w - 1)); using var glow = new SolidBrush(Color.FromArgb(85, 255, 255, 255)); e.Graphics.FillEllipse(glow, Math.Max(0, gx - 5), r.Y - 2, 10, r.Height + 4);
-    }
+    public AnimatedProgress() { DoubleBuffered = true; }
+    protected override void OnPaint(PaintEventArgs e) { using var bg = new SolidBrush(Color.FromArgb(10, 18, 35)); e.Graphics.FillRectangle(bg, ClientRectangle); var w = (int)(ClientSize.Width * Math.Clamp(Value / 100f, 0, 1)); if (w > 0) { using var b = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(1, w), Height), Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), 0); e.Graphics.FillRectangle(b, 0, 0, w, Height); } }
 }
 
 sealed class AnimatedRadar : Control
 {
-    public float Phase { get; set; }
-    public AnimatedRadar() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); DoubleBuffered = true; BackColor = Color.FromArgb(5, 10, 21); }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; var c = new Point(Width / 2, Height / 2); var radius = Math.Max(20, Math.Min(Width, Height) / 2 - 16); using var grid = new Pen(Color.FromArgb(105, 181, 70, 255), 1.5f); using var cross = new Pen(Color.FromArgb(70, 0, 224, 255), 1);
-        for (var i = 1; i <= 3; i++) { var rr = radius * i / 3; e.Graphics.DrawEllipse(grid, c.X - rr, c.Y - rr, rr * 2, rr * 2); } e.Graphics.DrawLine(cross, c.X - radius, c.Y, c.X + radius, c.Y); e.Graphics.DrawLine(cross, c.X, c.Y - radius, c.X, c.Y + radius); var angle = Phase; var ex = c.X + (float)Math.Cos(angle) * radius; var ey = c.Y + (float)Math.Sin(angle) * radius; using var sweep = new Pen(Color.FromArgb(155, 181, 70, 255), 2); e.Graphics.DrawLine(sweep, c.X, c.Y, ex, ey); using var dot = new SolidBrush(Color.FromArgb(220, 181, 70, 255)); e.Graphics.FillEllipse(dot, c.X - 6, c.Y - 6, 12, 12);
-    }
+    public float Phase { get; set; } public AnimatedRadar() { DoubleBuffered = true; }
+    protected override void OnPaint(PaintEventArgs e) { var c = new PointF(Width / 2f, Height / 2f); using var p = new Pen(Color.FromArgb(181, 70, 255), 1); for (var i = 1; i <= 4; i++) { var r = i * Math.Min(Width, Height) / 10f; e.Graphics.DrawEllipse(p, c.X - r, c.Y - r, r * 2, r * 2); } var a = Phase; using var beam = new Pen(Color.FromArgb(181, 70, 255), 2); e.Graphics.DrawLine(beam, c, new PointF(c.X + (float)Math.Cos(a) * Width * .45f, c.Y + (float)Math.Sin(a) * Height * .45f)); using var b = new SolidBrush(Color.FromArgb(0, 224, 255)); e.Graphics.FillEllipse(b, c.X - 5, c.Y - 5, 10, 10); }
 }
 
 sealed class AnimatedSparkline : Control
 {
-    public List<double> Values { get; set; } = new() { 54, 57, 53, 61, 56, 63, 59, 64, 60, 66 }; public float Phase { get; set; }
-    public AnimatedSparkline() { DoubleBuffered = true; BackColor = Color.FromArgb(5, 11, 22); }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e); if (Width < 20 || Height < 20) return; e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; using var grid = new Pen(Color.FromArgb(22, 45, 72)); for (var y = 12; y < Height; y += 20) e.Graphics.DrawLine(grid, 0, y, Width, y); if (Values.Count < 2) return; var min = Values.Min(); var max = Values.Max(); var range = Math.Max(1, max - min); var points = Values.Select((v, i) => new Point(8 + i * Math.Max(1, (Width - 16) / Math.Max(1, Values.Count - 1)), Height - 10 - (int)((v - min) / range * Math.Max(10, Height - 24)))).ToArray(); using var line = new Pen(Color.FromArgb(34, 240, 106), 2); e.Graphics.DrawLines(line, points); using var dot = new SolidBrush(Color.FromArgb(34, 240, 106)); foreach (var point in points) e.Graphics.FillEllipse(dot, point.X - 2, point.Y - 2, 5, 5); var pulse = (int)((Math.Sin(Phase * 2) + 1) * 2); var last = points[^1]; using var glow = new SolidBrush(Color.FromArgb(55, 34, 240, 106)); e.Graphics.FillEllipse(glow, last.X - 5 - pulse, last.Y - 5 - pulse, 10 + pulse * 2, 10 + pulse * 2);
-    }
+    public List<double> Values { get; set; } = new(); public float Phase { get; set; } public AnimatedSparkline() { DoubleBuffered = true; }
+    protected override void OnPaint(PaintEventArgs e) { using var grid = new Pen(Color.FromArgb(20, 45, 70)); for (var y = 15; y < Height; y += 24) e.Graphics.DrawLine(grid, 0, y, Width, y); var v = Values.Count > 1 ? Values : Enumerable.Range(0, 10).Select(i => 55 + 10 * Math.Sin(i)).ToList(); var min = v.Min(); var max = v.Max(); var span = Math.Max(1, max - min); var pts = v.Select((x, i) => new PointF(i * (Width - 4f) / Math.Max(1, v.Count - 1) + 2, Height - 8 - (float)((x - min) / span) * (Height - 20))).ToArray(); using var pen = new Pen(Color.FromArgb(34, 240, 106), 2); if (pts.Length > 1) e.Graphics.DrawLines(pen, pts); foreach (var pt in pts) e.Graphics.FillEllipse(Brushes.Lime, pt.X - 2, pt.Y - 2, 4, 4); }
 }
-
-
-
