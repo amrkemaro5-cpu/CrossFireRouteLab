@@ -16,21 +16,20 @@ if ($text -notmatch 'ApplyReferenceLayout\(\);') {
     $text = $text.Replace($old, $new)
 }
 
-# System.Drawing has two LinearGradientBrush constructors whose final argument can
-# accept a numeric zero. Make the intended direction explicit so Release builds are
-# deterministic and never fail with CS0121.
-$text = $text.Replace(
-    'Color.FromArgb(0, 224, 255), 0);',
-    'Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal);')
-$text = $text.Replace(
-    'Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), 0);',
-    'Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal);')
+# Make gradient direction explicit to avoid the .NET 8 overload ambiguity.
+$text = $text.Replace('Color.FromArgb(0, 224, 255), 0);', 'Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal);')
+$text = $text.Replace('Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), 0);', 'Color.FromArgb(181, 70, 255), Color.FromArgb(0, 224, 255), LinearGradientMode.Horizontal);')
+
+# Animated controls are hosted inside GRL cards; WinForms does not allow
+# transparent BackColor on these custom controls, so use the card surface.
+$text = $text.Replace('radar.BackColor = Color.Transparent;', 'radar.BackColor = Surface;')
+$text = $text.Replace('graph.BackColor = Color.Transparent;', 'graph.BackColor = Surface;')
 
 Set-Content -Path $path -Value $text -Encoding UTF8
 
 $final = Get-Content $path -Raw
 if ($final -notmatch 'public sealed partial class DashboardForm : Form') { throw 'Partial DashboardForm declaration was not applied.' }
 if ($final -notmatch 'ApplyReferenceLayout\(\);') { throw 'Reference layout hook was not applied.' }
-if ($final -match 'public AnimatedRadar\(\) \{[^}]*BackColor = Color\.Transparent;') { throw 'A transparent AnimatedRadar constructor remains; refusing to build.' }
-if ($final -match 'Color.FromArgb\(0, 224, 255\), 0\);') { throw 'Ambiguous gradient constructor remains; refusing to build.' }
-Write-Host 'Reference UI patch and gradient constructor verification passed.'
+if ($final -match 'Color.FromArgb\(0, 224, 255\), 0\);') { throw 'Ambiguous gradient constructor remains.' }
+if ($final -match 'radar\.BackColor = Color\.Transparent;|graph\.BackColor = Color\.Transparent;') { throw 'Unsupported transparent dashboard background remains.' }
+Write-Host 'UI patch verification passed.'
