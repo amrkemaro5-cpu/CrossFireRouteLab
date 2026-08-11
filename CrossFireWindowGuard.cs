@@ -71,7 +71,9 @@ internal sealed class CrossFireWindowGuard : IDisposable
 
             try
             {
-                return process.MainModule?.FileName.Contains("CrossFire", StringComparison.OrdinalIgnoreCase) == true;
+                var executablePath = process.MainModule?.FileName;
+                return !string.IsNullOrEmpty(executablePath) &&
+                       executablePath.Contains("CrossFire", StringComparison.OrdinalIgnoreCase);
             }
             catch
             {
