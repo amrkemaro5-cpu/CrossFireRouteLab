@@ -1,9 +1,9 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Runtime.InteropServices;
 
 namespace CrossFireRouteLab;
 
@@ -29,23 +29,34 @@ public static class GameScanner
     static readonly HashSet<string> Ignore = new(StringComparer.OrdinalIgnoreCase)
     {
         "system", "idle", "svchost", "lsass", "services", "wininit", "spoolsv", "explorer", "dwm",
-        "searchhost", "searchindexer", "runtimebroker", "textinputhost", "chrome", "msedge", "firefox",
-        "opera", "brave", "vivaldi", "discord", "slack", "teams", "outlook", "onedrive", "dropbox",
-        "powershell", "pwsh", "cmd", "conhost", "chatgpt", "steamwebhelper", "steam", "epicwebhelper",
-        "epicgameslauncher", "updater", "update", "taskmgr"
+        "searchhost", "searchindexer", "runtimebroker", "textinputhost",
+        "chrome", "msedge", "firefox", "opera", "brave", "vivaldi",
+        "discord", "slack", "teams", "outlook", "onedrive", "dropbox",
+        "powershell", "pwsh", "cmd", "conhost", "chatgpt",
+        "steamwebhelper", "steam", "epicwebhelper", "epicgameslauncher",
+        "battle.net", "blizzard update agent", "riotclientservices", "riotclientux",
+        "updater", "update", "taskmgr", "searchapp", "widgets", "widgetservice",
+        "applicationframehost", "sihost", "ctfmon", "fontdrvhost", "audiodg"
     };
 
     static readonly string[] GameWords =
     {
-        "crossfire", "valorant", "fortnite", "apex", "overwatch", "warzone", "callofduty", "cod",
-        "cs2", "csgo", "pubg", "dota", "leagueoflegends", "league", "minecraft", "roblox", "gta",
-        "eldenring", "battlefield", "rainbowsix", "r6", "destiny", "gameclient", "game"
+        "crossfire", "valorant", "fortnite", "apex", "overwatch", "warzone", "callofduty",
+        "pubg", "dota", "leagueoflegends", "minecraft", "roblox", "eldenring", "battlefield",
+        "rainbowsix", "destiny", "gameclient", "game-client", "gameserver", "gameclient64"
     };
 
     static readonly string[] GameFolders =
     {
-        "\\games\\", "\\steamapps\\common\\", "\\epic games\\", "\\riot games\\", "\\valorant\\",
-        "\\crossfire\\", "\\garena\\", "\\z8games\\", "\\blizzard\\", "\\ubisoft\\"
+        "\\games\\", "\\steamapps\\common\\", "\\epic games\\", "\\riot games\\",
+        "\\valorant\\", "\\crossfire\\", "\\garena\\", "\\z8games\\",
+        "\\blizzard\\", "\\ubisoft\\", "\\battle.net\\", "\\playstation\\",
+        "\\xboxgames\\", "\\windowsapps\\"
+    };
+
+    static readonly string[] LauncherWords =
+    {
+        "launcher", "bootstrapper", "patcher", "updater", "webhelper", "crashhandler"
     };
 
     public static async Task<List<GameEndpoint>> DiscoverAsync()
@@ -57,11 +68,14 @@ public static class GameScanner
 
         foreach (var line in text.Replace('\r', '\n').Split('\n'))
         {
-            var m = Regex.Match(line, @"^\s*(TCP|UDP)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s+(\d+)\s*$", RegexOptions.IgnoreCase);
+            var m = Regex.Match(
+                line,
+                @"^\s*(TCP|UDP)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s+(\d+)\s*$",
+                RegexOptions.IgnoreCase);
             if (!m.Success || !int.TryParse(m.Groups[5].Value, out var pid) || pid <= 0) continue;
 
             var protocol = m.Groups[1].Value.ToUpperInvariant();
-            var state = m.Groups[4].Value;
+            var state = string.IsNullOrWhiteSpace(m.Groups[4].Value) ? "ACTIVE" : m.Groups[4].Value;
             if (protocol == "TCP" && !state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)) continue;
 
             var remote = m.Groups[3].Value;
@@ -69,6 +83,7 @@ public static class GameScanner
             var ip = colon > 0 ? remote[..colon].Trim('[', ']') : remote.Trim('[', ']');
             var port = colon > 0 && int.TryParse(remote[(colon + 1)..], out var parsedPort) ? parsedPort : 0;
             if (!IPAddress.TryParse(ip, out var address) || address.AddressFamily != AddressFamily.InterNetwork || !IsPublic(ip)) continue;
+            if (port <= 0) continue;
 
             if (!cache.TryGetValue(pid, out var info))
             {
@@ -83,7 +98,7 @@ public static class GameScanner
                 catch { continue; }
             }
 
-            var score = Confidence(info.Name, info.Path, info.Title, pid, foreground, port, state);
+            var score = Confidence(info.Name, info.Path, info.Title, pid, foreground, protocol, port, state);
             if (score < 30 || GameProfileStore.IsBlocked(info.Name)) continue;
 
             result.Add(new GameEndpoint(
@@ -92,7 +107,7 @@ public static class GameScanner
                 protocol,
                 ip,
                 port,
-                string.IsNullOrWhiteSpace(state) ? "ACTIVE" : state,
+                state,
                 score >= 45,
                 score,
                 info.Path));
@@ -126,35 +141,51 @@ public static class GameScanner
         catch { return ""; }
     }
 
-    static int Confidence(string name, string path, string title, int pid, int foreground, int port, string state)
+    static int Confidence(string name, string path, string title, int pid, int foreground, string protocol, int port, string state)
     {
         if (Ignore.Contains(name) || GameProfileStore.IsBlocked(name)) return 0;
 
         var process = name.ToLowerInvariant();
-        var all = (process + " " + title + " " + path).ToLowerInvariant();
-        if (all.Contains("chatgpt") || all.Contains("microsoftedge") || all.Contains("chrome.exe")) return 0;
+        var lowerPath = path.ToLowerInvariant();
+        var lowerTitle = title.ToLowerInvariant();
+        var all = process + " " + lowerTitle + " " + lowerPath;
+
+        // Explicitly prevent the app itself, browsers and browser-like shells from
+        // entering game memory even when they have many public connections.
+        if (all.Contains("chatgpt") || all.Contains("microsoftedge") || all.Contains("chrome.exe") ||
+            all.Contains("firefox.exe") || all.Contains("discord.exe")) return 0;
 
         var score = 0;
-        var word = GameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
-        var folder = GameFolders.Any(f => path.Contains(f, StringComparison.OrdinalIgnoreCase));
-        var titleGame = GameWords.Any(w => title.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var knownGameName = GameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var gameFolder = GameFolders.Any(f => lowerPath.Contains(f, StringComparison.OrdinalIgnoreCase));
+        var gameTitle = GameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
         var foregroundProcess = pid == foreground;
-        var likelyInteractiveSocket = state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) || state.Equals("ACTIVE", StringComparison.OrdinalIgnoreCase);
+        var interactiveSocket = state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) ||
+                                state.Equals("ACTIVE", StringComparison.OrdinalIgnoreCase);
+        var hasWindowTitle = !string.IsNullOrWhiteSpace(title);
+        var highPort = port >= 1024 && port <= 65535;
+        var webPort = port is 80 or 443;
+        var launcher = LauncherWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
 
-        if (word) score += 52;
-        if (folder) score += 28;
-        if (titleGame) score += 18;
-        if (foregroundProcess) score += 30;
-        if (likelyInteractiveSocket) score += 12;
-        if (port >= 10000 && port <= 65535) score += 8;
-        if (port is 80 or 443) score -= 4;
-        if (process.Contains("launcher")) score -= 25;
-        if (process.Contains("helper")) score -= 20;
-        if (process.Contains("updater")) score -= 30;
+        if (knownGameName) score += 55;
+        if (gameFolder) score += 30;
+        if (gameTitle) score += 20;
+        if (foregroundProcess) score += 24;
+        if (hasWindowTitle) score += 8;
+        if (interactiveSocket) score += 12;
+        if (highPort) score += 8;
+        if (webPort) score -= 5;
+        if (launcher) score -= 28;
 
-        // Generic-game fallback: the foreground process with a live public socket can be
-        // a game even when its name is unknown. Known non-game processes are filtered first.
-        if (foregroundProcess && likelyInteractiveSocket) score += 18;
+        // Future-game fallback: an unknown foreground application with a real window
+        // and an active public game-like socket is allowed, but only after all known
+        // browser/system exclusions above. This avoids hard-coding every future game.
+        if (foregroundProcess && hasWindowTitle && interactiveSocket && highPort)
+            score += 18;
+
+        // A background process needs stronger evidence than a foreground game.
+        if (!foregroundProcess && !knownGameName && !gameFolder && !gameTitle)
+            score -= 20;
 
         return Math.Clamp(score, 0, 100);
     }
