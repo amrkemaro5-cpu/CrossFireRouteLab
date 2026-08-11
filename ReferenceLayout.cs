@@ -53,7 +53,6 @@ public sealed partial class DashboardForm
 
             root.Resize -= RootResize;
             root.Resize += RootResize;
-            RootResize(root, EventArgs.Empty);
         }
         finally
         {
@@ -73,7 +72,6 @@ public sealed partial class DashboardForm
         var right = available < 1000 ? 292 : 318;
         body.ColumnStyles[0].Width = left;
         body.ColumnStyles[2].Width = right;
-        body.PerformLayout();
     }
 
     static Label? FindLabel(Control root, string text)
@@ -183,14 +181,17 @@ public sealed partial class DashboardForm
         center.Dock = DockStyle.Fill;
         center.Margin = Padding.Empty;
         center.Padding = Padding.Empty;
-        center.RowStyles[0].SizeType = SizeType.Absolute;
-        center.RowStyles[0].Height = 178;
-        center.RowStyles[1].SizeType = SizeType.Absolute;
-        center.RowStyles[1].Height = 144;
-        center.RowStyles[2].SizeType = SizeType.Absolute;
-        center.RowStyles[2].Height = 148;
+
+        // Percent rows are used here deliberately. Absolute rows caused the
+        // console to collapse to zero height on small CI/DPI logical sizes.
+        center.RowStyles[0].SizeType = SizeType.Percent;
+        center.RowStyles[0].Height = 28;
+        center.RowStyles[1].SizeType = SizeType.Percent;
+        center.RowStyles[1].Height = 22;
+        center.RowStyles[2].SizeType = SizeType.Percent;
+        center.RowStyles[2].Height = 22;
         center.RowStyles[3].SizeType = SizeType.Percent;
-        center.RowStyles[3].Height = 100;
+        center.RowStyles[3].Height = 28;
 
         if (center.Controls.Count > 0 && center.Controls[0] is GRLCard hero)
             hero.Margin = new Padding(0, 0, 0, 5);
