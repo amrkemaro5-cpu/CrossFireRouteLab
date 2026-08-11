@@ -36,7 +36,8 @@ public static class GameScanner
         "steamwebhelper", "steam", "epicwebhelper", "epicgameslauncher",
         "battle.net", "blizzard update agent", "riotclientservices", "riotclientux",
         "updater", "update", "taskmgr", "searchapp", "widgets", "widgetservice",
-        "applicationframehost", "sihost", "ctfmon", "fontdrvhost", "audiodg"
+        "applicationframehost", "sihost", "ctfmon", "fontdrvhost", "audiodg",
+        "gameroutelab"
     };
 
     static readonly string[] GameWords =
@@ -59,6 +60,11 @@ public static class GameScanner
         "launcher", "bootstrapper", "patcher", "updater", "webhelper", "crashhandler"
     };
 
+    static readonly string[] FutureGameWords =
+    {
+        "game", "gameclient", "client64", "x64client", "win64", "arena", "battle"
+    };
+
     public static async Task<List<GameEndpoint>> DiscoverAsync()
     {
         var foreground = GetForegroundPid();
@@ -66,6 +72,8 @@ public static class GameScanner
         var cache = new Dictionary<int, (string Name, string Path, string Title)>();
         var result = new List<GameEndpoint>();
 
+        // First collect real public sockets. This remains the preferred source because
+        // it gives us the actual remote endpoint used by the game.
         foreach (var line in text.Replace('\r', '\n').Split('\n'))
         {
             var m = Regex.Match(
@@ -85,20 +93,10 @@ public static class GameScanner
             if (!IPAddress.TryParse(ip, out var address) || address.AddressFamily != AddressFamily.InterNetwork || !IsPublic(ip)) continue;
             if (port <= 0) continue;
 
-            if (!cache.TryGetValue(pid, out var info))
-            {
-                try
-                {
-                    using var process = Process.GetProcessById(pid);
-                    var path = "";
-                    try { path = process.MainModule?.FileName ?? ""; } catch { }
-                    info = (process.ProcessName, path, process.MainWindowTitle);
-                    cache[pid] = info;
-                }
-                catch { continue; }
-            }
+            if (!TryGetProcessInfo(pid, out var info)) continue;
+            cache[pid] = info;
 
-            var score = Confidence(info.Name, info.Path, info.Title, pid, foreground, protocol, port, state);
+            var score = Confidence(info.Name, info.Path, info.Title, pid, foreground, protocol, port, state, true);
             if (score < 30 || GameProfileStore.IsBlocked(info.Name)) continue;
 
             result.Add(new GameEndpoint(
@@ -113,11 +111,90 @@ public static class GameScanner
                 info.Path));
         }
 
+        // Critical fallback: a game must not disappear simply because its anti-cheat,
+        // renderer, UDP transport, firewall state, or current game screen prevents
+        // netstat from exposing a public socket at the exact scan moment. Enumerate
+        // running processes separately and identify the game by executable/path/window.
+        // This is what makes REFRESH GAMES and AUTO ANALYZE useful before an endpoint
+        // is visible. A synthetic endpoint is never used for ping/trace because its
+        // RemotePort is 0; it only represents a detected game process.
+        foreach (var process in Process.GetProcesses())
+        {
+            try
+            {
+                if (!TryGetProcessInfo(process.Id, out var info)) continue;
+                if (GameProfileStore.IsBlocked(info.Name)) continue;
+                if (cache.ContainsKey(process.Id)) continue;
+
+                var score = Confidence(info.Name, info.Path, info.Title, process.Id, foreground, "", 0, "NO_PUBLIC_SOCKET", false);
+                if (!IsStrongProcessCandidate(info.Name, info.Path, info.Title, process.Id, foreground, score)) continue;
+
+                result.Add(new GameEndpoint(
+                    info.Name,
+                    process.Id,
+                    "",
+                    "",
+                    0,
+                    "NO_PUBLIC_SOCKET",
+                    true,
+                    score,
+                    info.Path));
+            }
+            catch { }
+            finally { process.Dispose(); }
+        }
+
+        // If the same PID has real sockets, keep those records as the useful endpoint
+        // evidence and retain the process-only record only when it is the best proof
+        // of game identity. This also prevents duplicate memory entries.
         return result
+            .GroupBy(x => x.Pid)
+            .SelectMany(group =>
+            {
+                var real = group.Where(x => x.RemotePort > 0).ToList();
+                if (real.Count > 0) return real;
+                return group.Take(1);
+            })
             .GroupBy(x => $"{x.Pid}|{x.Protocol}|{x.RemoteIp}|{x.RemotePort}")
             .Select(g => g.OrderByDescending(x => x.Confidence).First())
             .OrderByDescending(x => x.Confidence)
             .ToList();
+    }
+
+    static bool TryGetProcessInfo(int pid, out (string Name, string Path, string Title) info)
+    {
+        info = default;
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            var name = process.ProcessName;
+            var path = "";
+            try { path = process.MainModule?.FileName ?? ""; } catch { }
+            var title = "";
+            try { title = process.MainWindowTitle ?? ""; } catch { }
+            info = (name, path, title);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    static bool IsStrongProcessCandidate(string name, string path, string title, int pid, int foreground, int score)
+    {
+        var process = Path.GetFileNameWithoutExtension(name ?? "");
+        var lowerProcess = process.ToLowerInvariant();
+        var lowerPath = (path ?? "").ToLowerInvariant();
+        var lowerTitle = (title ?? "").ToLowerInvariant();
+        var known = GameWords.Any(w => lowerProcess.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var folder = GameFolders.Any(w => lowerPath.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var futureName = FutureGameWords.Any(w => lowerProcess.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var futureTitle = FutureGameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var foreground = pid == foreground;
+        var hasTitle = !string.IsNullOrWhiteSpace(title);
+
+        if (known && score >= 45) return true;
+        if (folder && score >= 45) return true;
+        if (foreground && hasTitle && (futureName || futureTitle) && score >= 45) return true;
+        return false;
     }
 
     public static int GetForegroundPid()
@@ -141,7 +218,7 @@ public static class GameScanner
         catch { return ""; }
     }
 
-    static int Confidence(string name, string path, string title, int pid, int foreground, string protocol, int port, string state)
+    static int Confidence(string name, string path, string title, int pid, int foreground, string protocol, int port, string state, bool hasPublicSocket)
     {
         if (Ignore.Contains(name) || GameProfileStore.IsBlocked(name)) return 0;
 
@@ -150,22 +227,22 @@ public static class GameScanner
         var lowerTitle = title.ToLowerInvariant();
         var all = process + " " + lowerTitle + " " + lowerPath;
 
-        // Explicitly prevent the app itself, browsers and browser-like shells from
-        // entering game memory even when they have many public connections.
         if (all.Contains("chatgpt") || all.Contains("microsoftedge") || all.Contains("chrome.exe") ||
-            all.Contains("firefox.exe") || all.Contains("discord.exe")) return 0;
+            all.Contains("firefox.exe") || all.Contains("discord.exe") || all.Contains("gameroutelab")) return 0;
 
         var score = 0;
         var knownGameName = GameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
         var gameFolder = GameFolders.Any(f => lowerPath.Contains(f, StringComparison.OrdinalIgnoreCase));
         var gameTitle = GameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
         var foregroundProcess = pid == foreground;
-        var interactiveSocket = state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) ||
-                                state.Equals("ACTIVE", StringComparison.OrdinalIgnoreCase);
+        var interactiveSocket = hasPublicSocket && (state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) ||
+                                                     state.Equals("ACTIVE", StringComparison.OrdinalIgnoreCase));
         var hasWindowTitle = !string.IsNullOrWhiteSpace(title);
         var highPort = port >= 1024 && port <= 65535;
         var webPort = port is 80 or 443;
         var launcher = LauncherWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var futureName = FutureGameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var futureTitle = FutureGameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
 
         if (knownGameName) score += 55;
         if (gameFolder) score += 30;
@@ -176,14 +253,15 @@ public static class GameScanner
         if (highPort) score += 8;
         if (webPort) score -= 5;
         if (launcher) score -= 28;
+        if (futureName) score += 20;
+        if (futureTitle) score += 18;
 
-        // Future-game fallback: an unknown foreground application with a real window
-        // and an active public game-like socket is allowed, but only after all known
-        // browser/system exclusions above. This avoids hard-coding every future game.
-        if (foregroundProcess && hasWindowTitle && interactiveSocket && highPort)
-            score += 18;
+        // Unknown foreground game clients are supported when their executable/title
+        // looks game-like. We still require a real window and a game-oriented token;
+        // an arbitrary foreground application is never promoted to game memory.
+        if (!hasPublicSocket && foregroundProcess && hasWindowTitle && (futureName || futureTitle))
+            score += 10;
 
-        // A background process needs stronger evidence than a foreground game.
         if (!foregroundProcess && !knownGameName && !gameFolder && !gameTitle)
             score -= 20;
 
