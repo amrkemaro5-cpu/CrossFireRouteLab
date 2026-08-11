@@ -25,17 +25,9 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Patch WinForms transparent-control startup bug
+      - name: Apply verified reference UI patch
         shell: pwsh
-        run: |
-          $path = 'DashboardForm.cs'
-          $text = Get-Content $path -Raw
-          $old = 'public AnimatedRadar() { DoubleBuffered = true; BackColor = Color.Transparent; }'
-          $new = 'public AnimatedRadar() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); DoubleBuffered = true; BackColor = Color.FromArgb(5, 10, 21); }'
-          if (-not $text.Contains($old)) { throw 'Expected AnimatedRadar constructor was not found; refusing to build an unverified UI.' }
-          $text = $text.Replace($old, $new)
-          Set-Content -Path $path -Value $text -Encoding UTF8
-          if ((Get-Content $path -Raw).Contains('public AnimatedRadar() { DoubleBuffered = true; BackColor = Color.Transparent; }')) { throw 'Transparent AnimatedRadar constructor is still present.' }
+        run: .\polish_ui.ps1
 
       - name: Create GRL application icon
         shell: pwsh
@@ -46,10 +38,10 @@ jobs:
       - name: Restore
         run: dotnet restore CrossFireRouteLab.csproj
 
-      - name: Build
-        run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore
+      - name: Build with warnings treated as errors
+        run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
 
-      - name: Startup UI smoke test
+      - name: Startup and layout smoke test
         shell: pwsh
         run: |
           $testDir = Join-Path $env:RUNNER_TEMP 'grl-startup-smoke'
@@ -69,11 +61,22 @@ jobs:
           '@.Replace('__ROOT__', $env:GITHUB_WORKSPACE) | Set-Content (Join-Path $testDir 'Smoke.csproj') -Encoding UTF8
           @'
           using System;
+          using System.Linq;
+          using System.Collections.Generic;
           using CrossFireRouteLab;
           using System.Windows.Forms;
 
           static class Smoke
           {
+              static IEnumerable<Control> All(Control root)
+              {
+                  foreach (Control c in root.Controls)
+                  {
+                      yield return c;
+                      foreach (var child in All(c)) yield return child;
+                  }
+              }
+
               [STAThread]
               static void Main()
               {
@@ -81,22 +84,55 @@ jobs:
                   using var form = new DashboardForm();
                   form.CreateControl();
                   form.PerformLayout();
-                  Console.WriteLine($"SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}");
+                  form.Show();
+                  Application.DoEvents();
+
+                  if (form.ClientSize.Width < 1200 || form.ClientSize.Height < 800)
+                      throw new Exception($"Unexpected form size: {form.ClientSize}");
+
+                  var controls = All(form).ToList();
+                  var endpoint = controls.OfType<Label>().FirstOrDefault(x => x.Text == "ENDPOINT");
+                  if (endpoint == null || endpoint.Width < 65)
+                      throw new Exception("Endpoint label is too narrow or missing.");
+
+                  var logo = controls.OfType<PictureBox>().FirstOrDefault();
+                  if (logo == null || logo.Width < 130 || logo.Height < 130)
+                      throw new Exception("GRL logo is too small or missing.");
+
+                  var toolbar = controls.OfType<FlowLayoutPanel>().FirstOrDefault(x => x.Controls.Cast<Control>().Any(c => c.GetType().Name == "GRLActionButton"));
+                  if (toolbar == null)
+                      throw new Exception("Main action toolbar is missing.");
+
+                  var actions = toolbar.Controls.Cast<Control>().Where(c => c.GetType().Name == "GRLActionButton").ToArray();
+                  if (actions.Length != 10)
+                      throw new Exception($"Expected 10 styled action buttons, found {actions.Length}.");
+                  if (actions.Any(c => c.Width < 96 || c.Height < 70))
+                      throw new Exception("One or more action buttons have unsafe dimensions.");
+
+                  var title = controls.OfType<Label>().FirstOrDefault(x => x.Text == "GAME ROUTE LAB");
+                  if (title == null || title.Width < 500)
+                      throw new Exception("Main GRL title is missing or clipped.");
+
+                  if (controls.Any(c => c.Width <= 0 || c.Height <= 0))
+                      throw new Exception("A dashboard control has an invalid zero/negative size.");
+
+                  Console.WriteLine($"SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; actions={actions.Length}; endpointWidth={endpoint.Width}; logo={logo.Width}x{logo.Height}");
+                  form.Close();
               }
           }
           '@ | Set-Content (Join-Path $testDir 'Program.cs') -Encoding UTF8
           dotnet run --project (Join-Path $testDir 'Smoke.csproj') -c Release
 
-      - name: Persist verified source fix
+      - name: Persist verified source patch
         shell: pwsh
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add DashboardForm.cs
           if (git diff --cached --quiet) {
-            Write-Host 'No source patch needed.'
+            Write-Host 'DashboardForm already contains the verified layout hook.'
           } else {
-            git commit -m 'Fix startup crash from transparent custom control [skip ci]'
+            git commit -m 'Apply responsive GRL reference layout [skip ci]'
             git push origin HEAD:main
           }
 
@@ -114,6 +150,7 @@ jobs:
           if (-not (Test-Path package\GameRouteLab.exe)) { throw 'GameRouteLab.exe was not produced.' }
           if (-not (Test-Path package\GameRouteLab.runtimeconfig.json)) { throw 'Runtime config was not produced.' }
           if (-not (Test-Path package\GameRouteLab.deps.json)) { throw 'Dependency manifest was not produced.' }
+          if (-not (Test-Path package\GameRouteLab.ico)) { throw 'GRL icon was not packaged.' }
           Get-ChildItem package | Select-Object Name,Length | Format-Table -AutoSize
 
       - name: Smoke-check published application files
