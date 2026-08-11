@@ -17,7 +17,10 @@ internal static class Program
             {
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
-            Application.Run(new DashboardForm());
+
+            var dashboard = new DashboardForm();
+            using var crossFireWindowGuard = new CrossFireWindowGuard(dashboard);
+            Application.Run(dashboard);
         }
         catch (Exception ex)
         {
