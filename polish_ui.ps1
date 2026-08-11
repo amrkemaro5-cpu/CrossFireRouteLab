@@ -9,14 +9,17 @@ if ($text -notmatch 'public sealed partial class DashboardForm : Form') {
 }
 
 if ($text -notmatch 'ApplyReferenceLayout\(\);') {
-    $old = 'BuildUi();\n        RefreshMemory();'
+    $old = "BuildUi();$([Environment]::NewLine)        RefreshMemory();"
+    if (-not $text.Contains($old)) { $old = "BuildUi();`n        RefreshMemory();" }
     if (-not $text.Contains($old)) { throw 'DashboardForm initialization anchor not found.' }
-    $text = $text.Replace($old, 'BuildUi();\n        ApplyReferenceLayout();\n        RefreshMemory();')
+    $new = "BuildUi();$([Environment]::NewLine)        ApplyReferenceLayout();$([Environment]::NewLine)        RefreshMemory();"
+    $text = $text.Replace($old, $new)
 }
 
 Set-Content -Path $path -Value $text -Encoding UTF8
 
-if ((Get-Content $path -Raw) -notmatch 'public sealed partial class DashboardForm : Form') { throw 'Partial DashboardForm declaration was not applied.' }
-if ((Get-Content $path -Raw) -notmatch 'ApplyReferenceLayout\(\);') { throw 'Reference layout hook was not applied.' }
-if ((Get-Content $path -Raw) -match 'BackColor = Color\.Transparent; }') { throw 'A transparent custom-control constructor remains; refusing to build.' }
+$final = Get-Content $path -Raw
+if ($final -notmatch 'public sealed partial class DashboardForm : Form') { throw 'Partial DashboardForm declaration was not applied.' }
+if ($final -notmatch 'ApplyReferenceLayout\(\);') { throw 'Reference layout hook was not applied.' }
+if ($final -match 'public AnimatedRadar\(\) \{[^}]*BackColor = Color\.Transparent;') { throw 'A transparent AnimatedRadar constructor remains; refusing to build.' }
 Write-Host 'Reference UI patch verified.'
