@@ -8,13 +8,6 @@ using System.Windows.Forms;
 
 namespace CrossFireRouteLab;
 
-/// <summary>
-/// Final one-click evidence layer. It does not pretend that a single ISP path
-/// can be shortened by software. It learns the best real room endpoints seen
-/// over time, compares the current room against that history, and gives the
-/// user a concrete room/server choice when a materially better one has been
-/// observed. It also reports whether an alternate local interface exists.
-/// </summary>
 internal static class FinalAiRoutePatch
 {
     static bool installed;
@@ -205,7 +198,9 @@ internal static class FinalAiRoutePatch
         try
         {
             using var doc = JsonDocument.Parse(output.Trim());
-            var items = doc.RootElement.ValueKind == JsonValueKind.Array ? doc.RootElement.EnumerateArray() : new[] { doc.RootElement };
+            var items = new List<JsonElement>();
+            if (doc.RootElement.ValueKind == JsonValueKind.Array) items.AddRange(doc.RootElement.EnumerateArray());
+            else items.Add(doc.RootElement);
             foreach (var x in items) list.Add(new DefaultRoute(ReadInt(x, "InterfaceIndex"), Read(x, "Alias"), Read(x, "Gateway"), ReadInt(x, "Metric"), x.TryGetProperty("Up", out var up) && up.GetBoolean()));
         }
         catch { }
