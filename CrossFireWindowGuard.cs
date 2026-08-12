@@ -4,19 +4,20 @@ using System.Runtime.InteropServices;
 namespace CrossFireRouteLab;
 
 /// <summary>
-/// Protects the GRL dashboard from the CrossFire exclusive-fullscreen / Alt+Tab
-/// minimize race without stealing focus from the game.
+/// Keeps the GRL dashboard visible while CrossFire changes display mode or
+/// focus. The guard deliberately never activates GRL, never makes it TopMost,
+/// and never moves it in the z-order. CrossFire remains the active game.
 ///
-/// The previous guard called ShowWindow/SetWindowPos directly from several
-/// window messages. That could create a restore/minimize feedback loop on some
-/// DirectX fullscreen transitions. v11 only cancels an external minimize when
-/// CrossFire is the foreground application, and otherwise posts a deferred
-/// restore message outside the original WndProc call stack.
+/// The important rule is that a CrossFire minimize/hide transition is handled
+/// even when the foreground-window query is temporarily inconclusive. During
+/// exclusive-fullscreen startup Windows can report the launcher, shell, or
+/// another transition window for a few milliseconds; using that query as a
+/// gate was the reason earlier guards still missed the race.
 /// </summary>
 internal sealed class CrossFireWindowGuard : IDisposable
 {
     const int SwShowNoActivate = 4;
-    const int TimerIntervalMs = 350;
+    const int TimerIntervalMs = 200;
 
     const int WmSysCommand = 0x0112;
     const int WmSize = 0x0005;
@@ -64,12 +65,6 @@ internal sealed class CrossFireWindowGuard : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool IsWindowVisible(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll")]
-    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     public CrossFireWindowGuard(Form dashboard)
     {
@@ -120,25 +115,13 @@ internal sealed class CrossFireWindowGuard : IDisposable
         return false;
     }
 
-    static bool IsCrossFireForeground()
-    {
-        try
-        {
-            var handle = GetForegroundWindow();
-            if (handle == IntPtr.Zero) return false;
-            GetWindowThreadProcessId(handle, out var pid);
-            if (pid == 0) return false;
-            using var process = Process.GetProcessById((int)pid);
-            return CrossFireProcessNames.Any(n => process.ProcessName.Equals(n, StringComparison.OrdinalIgnoreCase));
-        }
-        catch { return false; }
-    }
-
     void CheckWindowState()
     {
         if (disposed || dashboard.IsDisposed || !dashboard.IsHandleCreated) return;
         if (!IsCrossFireRunning()) return;
-        if (!IsCrossFireForeground()) return;
+
+        // Do not require CrossFire to be reported as foreground here. During
+        // exclusive-fullscreen transitions that state can be transiently wrong.
         if (!IsIconic(dashboard.Handle) && IsWindowVisible(dashboard.Handle)) return;
         PostRestore();
     }
@@ -147,7 +130,11 @@ internal sealed class CrossFireWindowGuard : IDisposable
     {
         if (disposed || restorePosted || !dashboard.IsHandleCreated) return;
         restorePosted = true;
-        try { PostMessage(dashboard.Handle, WmRestoreNoActivate, IntPtr.Zero, IntPtr.Zero); }
+        try
+        {
+            if (!PostMessage(dashboard.Handle, WmRestoreNoActivate, IntPtr.Zero, IntPtr.Zero))
+                restorePosted = false;
+        }
         catch { restorePosted = false; }
     }
 
@@ -159,10 +146,12 @@ internal sealed class CrossFireWindowGuard : IDisposable
 
         try
         {
-            // SW_SHOWNOACTIVATE restores the dashboard while leaving CrossFire
-            // as the active application. No TopMost and no z-order promotion.
+            // Restore without activating GRL. CrossFire keeps keyboard/mouse
+            // focus and remains the foreground application.
             ShowWindowAsync(dashboard.Handle, SwShowNoActivate);
-            GuardWindow.UpdateWindowRegion(dashboard.Handle, SwpNoActivate | SwpShowWindow | SwpNoMove | SwpNoSize | SwpNoZOrder);
+            GuardWindow.UpdateWindowRegion(
+                dashboard.Handle,
+                SwpNoActivate | SwpShowWindow | SwpNoMove | SwpNoSize | SwpNoZOrder);
         }
         catch { }
     }
@@ -185,28 +174,29 @@ internal sealed class CrossFireWindowGuard : IDisposable
         {
             if (!owner.disposed && IsCrossFireRunning())
             {
-                // If CrossFire is the active foreground app, a minimize command
-                // arriving for GRL is an external fullscreen/focus transition.
-                // Cancel it instead of recursively restoring inside the message.
-                if (m.Msg == WmSysCommand && ((long)m.WParam & 0xFFF0) == ScMinimize && IsCrossFireForeground())
+                // These are the exact messages that were being missed during
+                // CrossFire's fullscreen/Alt+Tab transition. Do not gate them
+                // on GetForegroundWindow(); CrossFire can be in a transient
+                // launcher/DirectX transition state at that instant.
+                if (m.Msg == WmSysCommand && ((long)m.WParam & 0xFFF0) == ScMinimize)
                 {
                     owner.PostRestore();
                     return;
                 }
 
-                if (m.Msg == WmSize && m.WParam.ToInt32() == SizeMinimized && IsCrossFireForeground())
+                if (m.Msg == WmSize && m.WParam.ToInt32() == SizeMinimized)
                 {
                     owner.PostRestore();
                     return;
                 }
 
-                if (m.Msg == WmShowWindow && m.WParam == IntPtr.Zero && IsCrossFireForeground())
+                if (m.Msg == WmShowWindow && m.WParam == IntPtr.Zero)
                 {
                     owner.PostRestore();
                     return;
                 }
 
-                if (m.Msg == WmWindowPosChanging && m.LParam != IntPtr.Zero && IsCrossFireForeground())
+                if (m.Msg == WmWindowPosChanging && m.LParam != IntPtr.Zero)
                 {
                     try
                     {
@@ -249,6 +239,13 @@ internal sealed class CrossFireWindowGuard : IDisposable
 
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+        static extern bool SetWindowPos(
+            IntPtr hWnd,
+            IntPtr hWndInsertAfter,
+            int x,
+            int y,
+            int cx,
+            int cy,
+            uint uFlags);
     }
 }
