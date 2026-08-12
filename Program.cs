@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace CrossFireRouteLab;
@@ -17,15 +18,30 @@ internal static class Program
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
 
-            // v10 is a clean dashboard. It deliberately does not install any
-            // CrossFire window guard or call Win32 window-state APIs. Alt+Tab,
-            // fullscreen changes and game focus are left entirely to Windows.
-            Application.Run(new GameRouteLabV10Form());
+            // v10 deliberately does not install a CrossFire window guard and
+            // never changes WindowState, activation, focus, or TopMost status.
+            var dashboard = new GameRouteLabV10Form();
+            BindTelemetryText(dashboard);
+            Application.Run(dashboard);
         }
         catch (Exception ex)
         {
             CrashReporter.Show(ex, "Startup");
         }
+    }
+
+    static void BindTelemetryText(GameRouteLabV10Form form)
+    {
+        // Keep the telemetry controls visually layered inside their animated
+        // cards without adding another UI timer or another layout engine.
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var type = typeof(GameRouteLabV10Form);
+        var networkPanel = (Control?)type.GetField("networkPanel", flags)?.GetValue(form);
+        var routerPanel = (Control?)type.GetField("routerPanel", flags)?.GetValue(form);
+        var networkText = (Control?)type.GetField("networkText", flags)?.GetValue(form);
+        var routerText = (Control?)type.GetField("routerText", flags)?.GetValue(form);
+        if (networkPanel != null && networkText != null) networkPanel.Controls.Add(networkText);
+        if (routerPanel != null && routerText != null) routerPanel.Controls.Add(routerText);
     }
 }
 
