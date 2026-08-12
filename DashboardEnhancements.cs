@@ -10,6 +10,7 @@ public sealed partial class DashboardForm
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        EnsurePolishLoaded();
         SyncEndpointFromMemory();
         liveDiscoveryTimer.Tick -= LiveDiscoveryTimer_Tick;
         liveDiscoveryTimer.Tick += LiveDiscoveryTimer_Tick;
