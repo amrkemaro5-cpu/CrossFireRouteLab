@@ -133,7 +133,6 @@ internal sealed class CrossFireWindowGuard : IDisposable
         timer.Stop();
         timer.Dispose();
         try { nativeWindow.ReleaseHandle(); } catch { }
-        nativeWindow.Dispose();
     }
 
     sealed class GuardWindow : NativeWindow
