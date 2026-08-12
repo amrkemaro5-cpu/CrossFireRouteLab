@@ -416,3 +416,4 @@ sealed class AnimatedSparkline : Control
     protected override void OnPaint(PaintEventArgs e) { using var grid = new Pen(Color.FromArgb(20, 45, 70)); for (var y = 15; y < Height; y += 24) e.Graphics.DrawLine(grid, 0, y, Width, y); var v = Values.Count > 1 ? Values : Enumerable.Range(0, 10).Select(i => 55 + 10 * Math.Sin(i)).ToList(); var min = v.Min(); var max = v.Max(); var span = Math.Max(1, max - min); var pts = v.Select((x, i) => new PointF(i * (Width - 4f) / Math.Max(1, v.Count - 1) + 2, Height - 8 - (float)((x - min) / span) * (Height - 20))).ToArray(); using var pen = new Pen(Color.FromArgb(34, 240, 106), 2); if (pts.Length > 1) e.Graphics.DrawLines(pen, pts); foreach (var pt in pts) e.Graphics.FillEllipse(Brushes.Lime, pt.X - 2, pt.Y - 2, 4, 4); }
 }
 
+
