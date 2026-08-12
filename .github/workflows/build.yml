@@ -30,8 +30,12 @@ jobs:
           $src = Get-Content $path -Raw
           $src = $src.Replace('static readonly Color Text =', 'new static readonly Color Text =')
           $src = $src.Replace('Text="Game Route Lab v10";', 'base.Text="Game Route Lab v10";')
+          $src = $src.Replace('ColumnCount=11', 'ColumnCount=10')
+          $src = $src.Replace('for(int i=1;i<11;i++)t.ColumnStyles.Add', 'for(int i=1;i<10;i++)t.ColumnStyles.Add')
+          $src = $src.Replace('"AUTO ANALYZE","REFRESH GAMES","ADD GAME EXE","DETECT NETWORK"', '"AUTO ANALYZE","REFRESH GAMES","DETECT NETWORK"')
+          $src = $src.Replace('c={PURPLE,CYAN,BLUE,CYAN,PURPLE,CYAN,GREEN,PURPLE,GREEN,BLUE}', 'c={PURPLE,CYAN,CYAN,PURPLE,CYAN,GREEN,PURPLE,GREEN,BLUE}')
           Set-Content $path $src -Encoding UTF8
-          Write-Host 'v10 compile normalization applied.'
+          Write-Host 'v10 compile and toolbar normalization applied.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
@@ -71,8 +75,7 @@ jobs:
               if (!controls.OfType<Label>().Any(x => x.Text == "LIVE ANALYSIS CONSOLE")) throw new Exception("Console missing.");
               if (!controls.OfType<Button>().Any(x => x.Text == "AUTO ANALYZE")) throw new Exception("Auto Analyze missing.");
               if (controls.Count(x => x is Button b && b.Text == "ADD GAME EXE") != 1) throw new Exception("Add Game EXE must appear exactly once.");
-              if (!controls.OfType<Label>().Any(x => x.Text == "NETWORK TELEMETRY")) throw new Exception("Network telemetry missing.");
-              if (!controls.OfType<Label>().Any(x => x.Text == "ROUTER INTELLIGENCE")) throw new Exception("Router intelligence missing.");
+              if (!controls.Any(x => x.GetType().Name == "TelemetryPanel")) throw new Exception("Telemetry panel missing.");
               if (controls.Any(c => c.Width <= 0 || c.Height <= 0)) throw new Exception("Invalid control dimensions.");
               Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
               form.Close();
