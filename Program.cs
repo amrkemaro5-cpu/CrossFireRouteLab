@@ -24,6 +24,7 @@ internal static class Program
             var dashboard = new GameRouteLabV10Form();
             BindTelemetryText(dashboard);
             IspTrackerPatch.Apply(dashboard);
+            TelemetryVisibilityPatch.Apply(dashboard);
             Application.Run(dashboard);
         }
         catch (Exception ex)
