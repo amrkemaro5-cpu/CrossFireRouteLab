@@ -20,9 +20,6 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore
-        run: dotnet restore CrossFireRouteLab.csproj
-
       - name: Normalize known V10 source compatibility issues
         shell: pwsh
         run: |
@@ -30,6 +27,7 @@ jobs:
           $src = Get-Content $path -Raw
           $src = $src.Replace('static readonly Color Text =', 'new static readonly Color Text =')
           $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
+          $src = $src.Replace('public RadarPanel() { DoubleBuffered = true; BackColor = Color.Transparent; }', 'public RadarPanel() { DoubleBuffered = true; BackColor = Color.FromArgb(3, 7, 17); }')
           Set-Content $path $src -Encoding UTF8
           Write-Host 'V10 source compatibility normalization applied.'
 
