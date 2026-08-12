@@ -35,17 +35,9 @@ jobs:
           python -m pip install --disable-pip-version-check --quiet pillow
           python build_icon.py
 
-      - name: Fix v8 compile blockers
+      - name: Normalize v8 source before build
         shell: pwsh
-        run: |
-          $p = 'GameRouteLabV8Form.cs'
-          $s = Get-Content $p -Raw
-          $s = $s -replace 'static readonly Color Text =', 'static readonly Color TextColor ='
-          $s = $s -replace 'readonly Label gameTitle = new\(\), gameDetails = new\(\), endpointTitle = new\(\), metricLabel = new\(\), qualityLabel = new\(\), networkLabel = new\(\), routerLabel = new\(\), guideLabel = new\(\), statusLabel = new\(\);', 'Label gameTitle = new(), gameDetails = new(), endpointTitle = new(), metricLabel = new(), qualityLabel = new(), networkLabel = new(), routerLabel = new(), guideLabel = new(), statusLabel = new();'
-          $s = $s -replace '(?<![A-Za-z0-9_.])TextColor(?![A-Za-z0-9_])', 'V8Colors.TextColor'
-          $s = $s -replace 'V8Colors\.V8Colors\.TextColor', 'V8Colors.TextColor'
-          Set-Content $p $s -Encoding UTF8
-          Write-Host 'v8 compile fixes applied.'
+        run: .\fix_v8_build.ps1
 
       - name: Restore
         run: dotnet restore CrossFireRouteLab.csproj
@@ -101,7 +93,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add GameRouteLabV8Form.cs
-          if (git diff --cached --quiet) { Write-Host 'No v8 source changes.' } else { git commit -m 'Fix v8 compile errors [skip ci]'; git push origin HEAD:main }
+          if (git diff --cached --quiet) { Write-Host 'No v8 source changes.' } else { git commit -m 'Persist v8 compile fixes [skip ci]'; git push origin HEAD:main }
 
       - name: Publish reliable Windows x64 folder
         run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -o publish
