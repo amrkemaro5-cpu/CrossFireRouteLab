@@ -35,6 +35,18 @@ jobs:
           python -m pip install --disable-pip-version-check --quiet pillow
           python build_icon.py
 
+      - name: Fix v8 compile blockers
+        shell: pwsh
+        run: |
+          $p = 'GameRouteLabV8Form.cs'
+          $s = Get-Content $p -Raw
+          $s = $s -replace 'static readonly Color Text =', 'static readonly Color TextColor ='
+          $s = $s -replace 'readonly Label gameTitle = new\(\), gameDetails = new\(\), endpointTitle = new\(\), metricLabel = new\(\), qualityLabel = new\(\), networkLabel = new\(\), routerLabel = new\(\), guideLabel = new\(\), statusLabel = new\(\);', 'Label gameTitle = new(), gameDetails = new(), endpointTitle = new(), metricLabel = new(), qualityLabel = new(), networkLabel = new(), routerLabel = new(), guideLabel = new(), statusLabel = new();'
+          $s = $s -replace '(?<![A-Za-z0-9_.])TextColor(?![A-Za-z0-9_])', 'V8Colors.TextColor'
+          $s = $s -replace 'V8Colors\.V8Colors\.TextColor', 'V8Colors.TextColor'
+          Set-Content $p $s -Encoding UTF8
+          Write-Host 'v8 compile fixes applied.'
+
       - name: Restore
         run: dotnet restore CrossFireRouteLab.csproj
 
@@ -54,9 +66,7 @@ jobs:
               <UseWindowsForms>true</UseWindowsForms>
               <EnableWindowsTargeting>true</EnableWindowsTargeting>
             </PropertyGroup>
-            <ItemGroup>
-              <ProjectReference Include="__ROOT__\CrossFireRouteLab.csproj" />
-            </ItemGroup>
+            <ItemGroup><ProjectReference Include="__ROOT__\CrossFireRouteLab.csproj" /></ItemGroup>
           </Project>
           '@.Replace('__ROOT__', $env:GITHUB_WORKSPACE) | Set-Content (Join-Path $testDir 'Smoke.csproj') -Encoding UTF8
           @'
@@ -65,61 +75,22 @@ jobs:
           using System.Collections.Generic;
           using CrossFireRouteLab;
           using System.Windows.Forms;
-
-          static class Smoke
-          {
-              static IEnumerable<Control> All(Control root)
-              {
-                  foreach (Control c in root.Controls)
-                  {
-                      yield return c;
-                      foreach (var child in All(c)) yield return child;
-                  }
-              }
-
-              [STAThread]
-              static void Main()
-              {
-                  ApplicationConfiguration.Initialize();
-                  using var form = new DashboardForm();
-                  form.CreateControl();
-                  form.PerformLayout();
-                  form.Show();
-                  Application.DoEvents();
-
-                  // WinForms reports logical client pixels and can scale them down on the CI monitor.
-                  if (form.ClientSize.Width < 900 || form.ClientSize.Height < 650)
-                      throw new Exception($"Unexpected form size: {form.ClientSize}");
-
-                  var controls = All(form).ToList();
-                  var endpoint = controls.OfType<Label>().FirstOrDefault(x => x.Text == "ENDPOINT");
-                  if (endpoint == null || endpoint.Width < 45)
-                      throw new Exception("Endpoint label is too narrow or missing.");
-
-                  var logo = controls.OfType<PictureBox>().FirstOrDefault();
-                  if (logo == null || logo.Width < 90 || logo.Height < 90)
-                      throw new Exception("GRL logo is too small or missing.");
-
-                  var toolbar = controls.OfType<FlowLayoutPanel>().FirstOrDefault(x => x.Controls.Cast<Control>().Any(c => c.GetType().Name == "GRLActionButton"));
-                  if (toolbar == null)
-                      throw new Exception("Main action toolbar is missing.");
-
-                  var actions = toolbar.Controls.Cast<Control>().Where(c => c.GetType().Name == "GRLActionButton").ToArray();
-                  if (actions.Length != 10)
-                      throw new Exception($"Expected 10 styled action buttons, found {actions.Length}.");
-                  if (actions.Any(c => c.Width < 64 || c.Height < 46))
-                      throw new Exception("One or more action buttons have unsafe dimensions.");
-
-                  var title = controls.OfType<Label>().FirstOrDefault(x => x.Text == "GAME ROUTE LAB");
-                  if (title == null || title.Width < 430)
-                      throw new Exception("Main GRL title is missing or clipped.");
-
-                  if (controls.Any(c => c.Width <= 0 || c.Height <= 0))
-                      throw new Exception("A dashboard control has an invalid zero/negative size.");
-
-                  Console.WriteLine($"SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; actions={actions.Length}; endpointWidth={endpoint.Width}; logo={logo.Width}x{logo.Height}");
-                  form.Close();
-              }
+          static class Smoke {
+            static IEnumerable<Control> All(Control root) { foreach (Control c in root.Controls) { yield return c; foreach (var x in All(c)) yield return x; } }
+            [STAThread] static void Main() {
+              ApplicationConfiguration.Initialize();
+              using var form = new GameRouteLabV8Form();
+              form.CreateControl(); form.PerformLayout(); form.Show(); Application.DoEvents();
+              if (form.ClientSize.Width < 900 || form.ClientSize.Height < 650) throw new Exception($"Unexpected form size: {form.ClientSize}");
+              var controls = All(form).ToList();
+              if (!controls.OfType<Label>().Any(x => x.Text == "GAME ROUTE LAB")) throw new Exception("GRL title missing.");
+              if (!controls.OfType<Label>().Any(x => x.Text == "GAME MEMORY")) throw new Exception("Game Memory missing.");
+              if (!controls.OfType<Label>().Any(x => x.Text == "LIVE ANALYSIS CONSOLE")) throw new Exception("Console missing.");
+              if (!controls.OfType<Button>().Any(x => x.Text.Contains("AUTO ANALYZE"))) throw new Exception("Auto Analyze missing.");
+              if (controls.Any(c => c.Width <= 0 || c.Height <= 0)) throw new Exception("Invalid control dimensions.");
+              Console.WriteLine($"V8 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
+              form.Close();
+            }
           }
           '@ | Set-Content (Join-Path $testDir 'Program.cs') -Encoding UTF8
           dotnet run --project (Join-Path $testDir 'Smoke.csproj') -c Release
@@ -129,13 +100,8 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add DashboardForm.cs
-          if (git diff --cached --quiet) {
-            Write-Host 'DashboardForm already contains the verified layout hook.'
-          } else {
-            git commit -m 'Apply responsive GRL reference layout [skip ci]'
-            git push origin HEAD:main
-          }
+          git add GameRouteLabV8Form.cs
+          if (git diff --cached --quiet) { Write-Host 'No v8 source changes.' } else { git commit -m 'Fix v8 compile errors [skip ci]'; git push origin HEAD:main }
 
       - name: Publish reliable Windows x64 folder
         run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -o publish
