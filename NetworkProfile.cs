@@ -53,14 +53,27 @@ public static class NetworkProfileDetector
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(4) };
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("GameRouteLab/3.0 network-profile");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("GameRouteLab/3.1 network-profile");
             using var doc = JsonDocument.Parse(await client.GetStringAsync("https://ipwho.is/"));
             var root = doc.RootElement;
             if (root.TryGetProperty("success", out var ok) && !ok.GetBoolean()) throw new Exception("IP lookup rejected");
             publicIp = Get(root, "ip"); country = Get(root, "country"); city = Get(root, "city");
-            if (root.TryGetProperty("connection", out var c)) { isp = Get(c, "isp"); org = Get(c, "org"); asn = Get(c, "asn"); }
+            if (root.TryGetProperty("connection", out var c))
+            {
+                isp = Get(c, "isp");
+                org = Get(c, "org");
+                asn = Get(c, "asn");
+            }
         }
         catch { }
+
+        // AS8452 is Telecom Egypt / TE Data (WE). Keep the user's ISP label
+        // accurate instead of trusting inconsistent third-party ISP strings.
+        if (asn.Contains("8452", StringComparison.OrdinalIgnoreCase))
+        {
+            isp = "WE / Telecom Egypt";
+            org = "Telecom Egypt";
+        }
 
         var note = string.IsNullOrWhiteSpace(publicIp)
             ? "Local network detected. Public ISP enrichment unavailable/offline."
