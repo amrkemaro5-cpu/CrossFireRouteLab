@@ -24,6 +24,7 @@ internal static class Program
             TelemetryVisibilityPatch.Apply(dashboard);
             AutoOptimizationPatch.Apply(dashboard);
             EndpointMeasurementPatch.Apply(dashboard);
+            GenericGameDetectionPatch.Apply(dashboard);
             CrossFireConnectionDiscoveryPatch.Apply(dashboard);
             CrossFireRoomTransportPatch.Apply(dashboard);
             CrossFirePacketRoomDiscoveryPatchV2.Apply(dashboard);
