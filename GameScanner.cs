@@ -31,7 +31,7 @@ public static class GameScanner
         "system", "idle", "svchost", "lsass", "services", "wininit", "spoolsv", "explorer", "dwm",
         "searchhost", "searchindexer", "runtimebroker", "textinputhost",
         "chrome", "msedge", "firefox", "opera", "brave", "vivaldi",
-        "discord", "slack", "teams", "outlook", "onedrive", "dropbox",
+        "discord", "slack", "teams", "outlook", "onedrive", "dropbox", "whatsapp", "whatsapp.root", "nte",
         "powershell", "pwsh", "cmd", "conhost", "chatgpt",
         "steamwebhelper", "steam", "epicwebhelper", "epicgameslauncher",
         "battle.net", "blizzard update agent", "riotclientservices", "riotclientux",
@@ -49,10 +49,9 @@ public static class GameScanner
 
     static readonly string[] GameFolders =
     {
-        "\\games\\", "\\steamapps\\common\\", "\\epic games\\", "\\riot games\\",
-        "\\valorant\\", "\\crossfire\\", "\\garena\\", "\\z8games\\",
-        "\\blizzard\\", "\\ubisoft\\", "\\battle.net\\", "\\playstation\\",
-        "\\xboxgames\\", "\\windowsapps\\"
+        "\\steamapps\\common\\", "\\epic games\\", "\\riot games\\", "\\valorant\\", "\\crossfire\\",
+        "\\garena\\", "\\z8games\\", "\\blizzard\\", "\\ubisoft\\", "\\battle.net\\",
+        "\\playstation\\", "\\xboxgames\\"
     };
 
     static readonly string[] LauncherWords =
@@ -74,34 +73,24 @@ public static class GameScanner
 
         foreach (var line in text.Replace('\r', '\n').Split('\n'))
         {
-            var m = Regex.Match(
-                line,
-                @"^\s*(TCP|UDP)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s+(\d+)\s*$",
-                RegexOptions.IgnoreCase);
+            var m = Regex.Match(line, @"^\s*(TCP|UDP)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s+(\d+)\s*$", RegexOptions.IgnoreCase);
             if (!m.Success || !int.TryParse(m.Groups[5].Value, out var pid) || pid <= 0) continue;
-
             var protocol = m.Groups[1].Value.ToUpperInvariant();
             var state = string.IsNullOrWhiteSpace(m.Groups[4].Value) ? "ACTIVE" : m.Groups[4].Value;
             if (protocol == "TCP" && !state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)) continue;
-
             var remote = m.Groups[3].Value;
             var colon = remote.LastIndexOf(':');
             var ip = colon > 0 ? remote[..colon].Trim('[', ']') : remote.Trim('[', ']');
             var port = colon > 0 && int.TryParse(remote[(colon + 1)..], out var parsedPort) ? parsedPort : 0;
             if (!IPAddress.TryParse(ip, out var address) || address.AddressFamily != AddressFamily.InterNetwork || !IsPublic(ip)) continue;
             if (port <= 0) continue;
-
             if (!TryGetProcessInfo(pid, out var info)) continue;
             cache[pid] = info;
-
             var score = Confidence(info.Name, info.Path, info.Title, pid, foreground, protocol, port, state, true);
             if (score < 30 || GameProfileStore.IsBlocked(info.Name)) continue;
-
             result.Add(new GameEndpoint(info.Name, pid, protocol, ip, port, state, score >= 45, score, info.Path));
         }
 
-        // Process-only fallback: identify a game even when its public socket is not
-        // visible yet. Such records have RemotePort=0 and are never pinged/traced.
         foreach (var process in Process.GetProcesses())
         {
             try
@@ -109,10 +98,8 @@ public static class GameScanner
                 if (!TryGetProcessInfo(process.Id, out var info)) continue;
                 if (GameProfileStore.IsBlocked(info.Name)) continue;
                 if (cache.ContainsKey(process.Id)) continue;
-
                 var score = Confidence(info.Name, info.Path, info.Title, process.Id, foreground, "", 0, "NO_PUBLIC_SOCKET", false);
                 if (!IsStrongProcessCandidate(info.Name, info.Path, info.Title, process.Id, foreground, score)) continue;
-
                 result.Add(new GameEndpoint(info.Name, process.Id, "", "", 0, "NO_PUBLIC_SOCKET", true, score, info.Path));
             }
             catch { }
@@ -161,7 +148,8 @@ public static class GameScanner
         var futureTitle = FutureGameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
         var foregroundProcessCandidate = pid == foreground;
         var hasTitle = !string.IsNullOrWhiteSpace(title);
-
+        var systemPath = lowerPath.Contains("\\windows\\") || lowerPath.Contains("\\system32\\") || lowerPath.Contains("\\windowsapps\\");
+        if (systemPath) return false;
         if (known && score >= 45) return true;
         if (folder && score >= 45) return true;
         if (foregroundProcessCandidate && hasTitle && (futureName || futureTitle) && score >= 45) return true;
@@ -192,14 +180,11 @@ public static class GameScanner
     static int Confidence(string name, string path, string title, int pid, int foreground, string protocol, int port, string state, bool hasPublicSocket)
     {
         if (Ignore.Contains(name) || GameProfileStore.IsBlocked(name)) return 0;
-
         var process = name.ToLowerInvariant();
         var lowerPath = path.ToLowerInvariant();
         var lowerTitle = title.ToLowerInvariant();
         var all = process + " " + lowerTitle + " " + lowerPath;
-
-        if (all.Contains("chatgpt") || all.Contains("microsoftedge") || all.Contains("chrome.exe") ||
-            all.Contains("firefox.exe") || all.Contains("discord.exe") || all.Contains("gameroutelab")) return 0;
+        if (all.Contains("chatgpt") || all.Contains("microsoftedge") || all.Contains("chrome.exe") || all.Contains("firefox.exe") || all.Contains("discord.exe") || all.Contains("whatsapp") || all.Contains("gameroutelab")) return 0;
 
         var score = 0;
         var knownGameName = GameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
@@ -213,7 +198,6 @@ public static class GameScanner
         var launcher = LauncherWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureName = FutureGameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureTitle = FutureGameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
-
         if (knownGameName) score += 55;
         if (gameFolder) score += 30;
         if (gameTitle) score += 20;
@@ -225,10 +209,8 @@ public static class GameScanner
         if (launcher) score -= 28;
         if (futureName) score += 20;
         if (futureTitle) score += 18;
-
         if (!hasPublicSocket && foregroundProcess && hasWindowTitle && (futureName || futureTitle)) score += 10;
         if (!foregroundProcess && !knownGameName && !gameFolder && !gameTitle) score -= 20;
-
         return Math.Clamp(score, 0, 100);
     }
 
@@ -255,7 +237,6 @@ public static class GameScanner
                 StandardOutputEncoding = Encoding.UTF8
             });
             if (process == null) return "";
-
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
             using var cancellation = new CancellationTokenSource(timeout);
