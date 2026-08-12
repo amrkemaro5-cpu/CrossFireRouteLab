@@ -20,6 +20,9 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Restore
+        run: dotnet restore CrossFireRouteLab.csproj
+
       - name: Normalize known V10 source compatibility issues
         shell: pwsh
         run: |
@@ -45,7 +48,7 @@ jobs:
           Write-Host 'CrossFire final room detector verification passed.'
 
       - name: Build with warnings treated as errors
-        run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
+        run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
 
       - name: Startup and layout smoke test
         shell: pwsh
