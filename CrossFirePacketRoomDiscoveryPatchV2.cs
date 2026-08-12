@@ -9,16 +9,6 @@ namespace CrossFireRouteLab;
 
 /// <summary>
 /// Packet-level CrossFire room/game transport discovery.
-///
-/// CrossFire commonly uses TCP 10009/13008 for control/server communication,
-/// while community support material also documents UDP game traffic on a
-/// wider/dynamic port range. The normal socket table therefore cannot be
-/// treated as the authoritative room endpoint.
-///
-/// This patch captures the live NIC traffic and correlates public IPv4 TCP/UDP
-/// flows with the endpoints CrossFire already exposes. It also looks for a
-/// new high-volume UDP flow (especially 12000-16000) that appears while the
-/// game is active. The capture is read-only and temporary.
 /// </summary>
 internal static class CrossFirePacketRoomDiscoveryPatchV2
 {
@@ -26,8 +16,20 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
     static bool captureRunning;
     static DateTime lastCapture = DateTime.MinValue;
     static bool warnedElevation;
+    static string roomTargetIp = "";
+    static int roomTargetPort;
+    static string roomTargetProtocol = "";
+
     static readonly HashSet<int> WebPorts = new() { 80, 443, 8080, 8443 };
     static readonly HashSet<int> CommonNoisePorts = new() { 53, 67, 68, 123, 1900, 3702, 5353, 5222, 3478, 5349 };
+
+    public static bool TryGetRoomTarget(out string ip, out int port, out string protocol)
+    {
+        ip = roomTargetIp;
+        port = roomTargetPort;
+        protocol = roomTargetProtocol;
+        return IPAddress.TryParse(ip, out var parsed) && parsed.AddressFamily == AddressFamily.InterNetwork && port > 0 && protocol.Length > 0;
+    }
 
     public static void Apply(GameRouteLabV10Form form)
     {
@@ -106,9 +108,6 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
         try
         {
             Log(form, "[CROSSFIRE] Capturing live game traffic for 8 seconds… stay inside the room during this window.");
-
-            // No packet filter is installed here intentionally. We need to see
-            // UDP game ports that are not visible in the normal connection list.
             await RunAsync("pktmon.exe", "filter", "remove").ConfigureAwait(false);
             var start = await RunAsync("pktmon.exe", "start", "--capture", "--comp", "nics", "--pkt-size", "256", "--file-name", etl, "--file-size", "32", "--log-mode", "circular").ConfigureAwait(false);
             if (start.ExitCode != 0)
@@ -132,13 +131,9 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
                 return;
             }
 
-            var localIps = GetLocalIPv4s();
-            var flows = ParsePcap(pcap, localIps);
+            var flows = ParsePcap(pcap, GetLocalIPv4s());
             var knownKeys = new HashSet<string>(known.Select(x => $"{x.Protocol}|{x.Ip}:{x.Port}"), StringComparer.OrdinalIgnoreCase);
 
-            // First prefer known CrossFire endpoints that actually carry
-            // bidirectional traffic. This catches multiplexed room traffic on
-            // an existing 10009/13008 socket.
             var knownTraffic = flows
                 .Where(x => knownKeys.Contains($"{x.Protocol}|{x.RemoteIp}:{x.RemotePort}"))
                 .Where(x => x.Packets >= 4 && x.Inbound > 0 && x.Outbound > 0)
@@ -146,10 +141,6 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
                 .Take(8)
                 .ToList();
 
-            // Then look for an otherwise-hidden public game flow. CrossFire
-            // reports from Z8Games/community support have historically used a
-            // dynamic UDP range around 12000-14000, so those ports receive a
-            // strong preference without being hard-coded as the only answer.
             var hidden = flows
                 .Where(x => !knownKeys.Contains($"{x.Protocol}|{x.RemoteIp}:{x.RemotePort}"))
                 .Where(IsUsefulHiddenCandidate)
@@ -163,8 +154,7 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
                 return;
             }
 
-            var candidates = knownTraffic.Concat(hidden).Take(12).ToList();
-            Publish(form, candidates, knownKeys);
+            Publish(form, knownTraffic.Concat(hidden).Take(12).ToList(), knownKeys);
         }
         catch (Exception ex)
         {
@@ -196,7 +186,6 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
         if (f.Packets < 6 || f.Inbound == 0 || f.Outbound == 0) return false;
         if (f.Protocol == "UDP" && f.RemotePort is >= 12000 and <= 16000) return true;
         if (f.Protocol == "TCP" && f.RemotePort >= 10000 && f.RemotePort <= 20000) return true;
-        // Allow other high-numbered bidirectional flows, but rank them lower.
         return f.RemotePort >= 1024;
     }
 
@@ -221,7 +210,11 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
                 var flags = BindingFlags.Instance | BindingFlags.NonPublic;
                 var type = typeof(GameRouteLabV10Form);
                 var best = candidates[0];
+                var bestKey = $"{best.Protocol}|{best.RemoteIp}:{best.RemotePort}";
                 var hidden = candidates.Where(x => !knownKeys.Contains($"{x.Protocol}|{x.RemoteIp}:{x.RemotePort}")).ToList();
+                roomTargetIp = best.RemoteIp;
+                roomTargetPort = best.RemotePort;
+                roomTargetProtocol = best.Protocol;
 
                 if (type.GetField("connectionText", flags)?.GetValue(form) is Label label)
                 {
@@ -234,7 +227,7 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
                 if (type.GetField("endpointBox", flags)?.GetValue(form) is TextBox box)
                     box.Text = $"{best.RemoteIp}:{best.RemotePort}";
 
-                var kind = knownKeys.Contains($"{best.Protocol}|{best.RemoteIp}:{best.RemotePort}") ? "SAME TRANSPORT" : "HIDDEN ROOM FLOW";
+                var kind = knownKeys.Contains(bestKey) ? "SAME TRANSPORT" : "HIDDEN ROOM FLOW";
                 if (type.GetField("metrics", flags)?.GetValue(form) is Label metrics)
                 {
                     metrics.Text = $"ENDPOINT   {best.RemoteIp}:{best.RemotePort}\r\nPROTOCOL   {best.Protocol}\r\nTRAFFIC    {best.Packets} packets\r\nDIRECTION  {best.Outbound} out / {best.Inbound} in\r\nBYTES      {best.Bytes:N0}\r\nSTATUS     {kind}";
@@ -249,7 +242,7 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
                 Log(form, $"[CROSSFIRE] Room capture found {candidates.Count} useful flow(s): {candidates.Count(x => x.Protocol == "TCP")} TCP, {candidates.Count(x => x.Protocol == "UDP")} UDP.");
                 Log(form, $"[CROSSFIRE] Best game-flow candidate: {best.RemoteIp}:{best.RemotePort} {best.Protocol} • {best.Packets} packets • {best.Bytes:N0} bytes • {best.Outbound} out / {best.Inbound} in.");
                 if (hidden.Count > 0)
-                    Log(form, $"[CROSSFIRE] Hidden flow candidates: {hidden.Count}; UDP 12000-16000 candidates are ranked first because CrossFire support material documents dynamic UDP game ports in this range.");
+                    Log(form, $"[CROSSFIRE] Hidden flow candidates: {hidden.Count}; UDP 12000-16000 candidates receive priority because CrossFire support material documents dynamic UDP game ports in this range.");
             }
             catch (Exception ex)
             {
@@ -264,10 +257,8 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
         try
         {
             foreach (var n in NetworkInterface.GetAllNetworkInterfaces().Where(x => x.OperationalStatus == OperationalStatus.Up))
-            {
                 foreach (var a in n.GetIPProperties().UnicastAddresses.Where(x => x.Address.AddressFamily == AddressFamily.InterNetwork))
                     set.Add(a.Address.ToString());
-            }
         }
         catch { }
         return set;
@@ -288,8 +279,7 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
 
             if (blockType == 0x00000001 && blockLength >= 20)
             {
-                uint interfaceId = (uint)interfaces.Count;
-                interfaces[interfaceId] = LE16(data, offset + 8);
+                interfaces[(uint)interfaces.Count] = LE16(data, offset + 8);
             }
             else if (blockType == 0x00000006 && blockLength >= 32)
             {
@@ -303,16 +293,9 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
                     {
                         var key = $"{flow.Protocol}|{flow.RemoteIp}|{flow.RemotePort}";
                         if (flows.TryGetValue(key, out var old))
-                        {
-                            flows[key] = old with
-                            {
-                                Packets = old.Packets + 1,
-                                Bytes = old.Bytes + flow.Bytes,
-                                Inbound = old.Inbound + flow.Inbound,
-                                Outbound = old.Outbound + flow.Outbound
-                            };
-                        }
-                        else flows[key] = flow;
+                            flows[key] = old with { Packets = old.Packets + 1, Bytes = old.Bytes + flow.Bytes, Inbound = old.Inbound + flow.Inbound, Outbound = old.Outbound + flow.Outbound };
+                        else
+                            flows[key] = flow;
                     }
                 }
             }
@@ -325,7 +308,6 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
 
     static PacketFlow? ParsePacket(byte[] d, int o, int len, ushort linkType, HashSet<string> localIps)
     {
-        // Ethernet / DLT_EN10MB.
         if (linkType != 1 || len < 34) return null;
 
         int ip = o;
@@ -349,13 +331,11 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
 
         int transport = ip + ihl;
         if (transport + 4 > o + len) return null;
-
         string remote = outbound ? dst : src;
         int remotePort = outbound ? BE16(d, transport + 2) : BE16(d, transport);
 
         if (proto == 17)
             return new PacketFlow(remote, remotePort, "UDP", 1, len, inbound ? 1 : 0, outbound ? 1 : 0);
-
         if (proto != 6 || transport + 20 > o + len) return null;
         return new PacketFlow(remote, remotePort, "TCP", 1, len, inbound ? 1 : 0, outbound ? 1 : 0);
     }
@@ -411,12 +391,7 @@ internal static class CrossFirePacketRoomDiscoveryPatchV2
     static void Log(GameRouteLabV10Form form, string text)
     {
         if (form.IsDisposed || !form.IsHandleCreated) return;
-        try
-        {
-            form.BeginInvoke((Action)(() =>
-                typeof(GameRouteLabV10Form).GetMethod("Log", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(form, new object[] { text })));
-        }
-        catch { }
+        try { form.BeginInvoke((Action)(() => typeof(GameRouteLabV10Form).GetMethod("Log", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(form, new object[] { text }))); } catch { }
     }
 
     static void TryDelete(string path)
