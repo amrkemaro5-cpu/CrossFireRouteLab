@@ -29,7 +29,7 @@ internal static class Program
             EndpointMeasurementPatch.Apply(dashboard);
             CrossFireConnectionDiscoveryPatch.Apply(dashboard);
             CrossFireRoomTransportPatch.Apply(dashboard);
-            CrossFirePacketRoomDiscoveryPatch.Apply(dashboard);
+            CrossFirePacketRoomDiscoveryPatchV2.Apply(dashboard);
             RouteOptimizerPatch.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
