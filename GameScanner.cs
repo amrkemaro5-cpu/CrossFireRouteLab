@@ -47,6 +47,11 @@ public static class GameScanner
         "rainbowsix", "destiny", "gameclient", "game-client", "gameserver", "gameclient64"
     };
 
+    static readonly string[] CrossFireWords =
+    {
+        "crossfire", "crossfire_x64", "crossfire64", "crossfireclient", "crossfireclient64"
+    };
+
     static readonly string[] GameFolders =
     {
         "\\steamapps\\common\\", "\\epic games\\", "\\riot games\\", "\\valorant\\", "\\crossfire\\",
@@ -71,6 +76,23 @@ public static class GameScanner
         var cache = new Dictionary<int, (string Name, string Path, string Title)>();
         var result = new List<GameEndpoint>();
 
+        // First enumerate the running processes. This is deliberately independent
+        // of netstat: CrossFire can start before its public socket is established,
+        // and some game builds briefly expose no socket while loading.
+        foreach (var process in Process.GetProcesses())
+        {
+            try
+            {
+                if (!TryGetProcessInfo(process.Id, out var info)) continue;
+                if (GameProfileStore.IsBlocked(info.Name) || Ignore.Contains(info.Name)) continue;
+                var score = Confidence(info.Name, info.Path, info.Title, process.Id, foreground, "", 0, "NO_PUBLIC_SOCKET", false);
+                if (!IsStrongProcessCandidate(info.Name, info.Path, info.Title, process.Id, foreground, score)) continue;
+                result.Add(new GameEndpoint(info.Name, process.Id, "", "", 0, "PROCESS_RUNNING", true, Math.Max(score, IsCrossFire(info.Name) ? 75 : score), info.Path));
+            }
+            catch { }
+            finally { process.Dispose(); }
+        }
+
         foreach (var line in text.Replace('\r', '\n').Split('\n'))
         {
             var m = Regex.Match(line, @"^\s*(TCP|UDP)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s+(\d+)\s*$", RegexOptions.IgnoreCase);
@@ -91,21 +113,6 @@ public static class GameScanner
             result.Add(new GameEndpoint(info.Name, pid, protocol, ip, port, state, score >= 45, score, info.Path));
         }
 
-        foreach (var process in Process.GetProcesses())
-        {
-            try
-            {
-                if (!TryGetProcessInfo(process.Id, out var info)) continue;
-                if (GameProfileStore.IsBlocked(info.Name)) continue;
-                if (cache.ContainsKey(process.Id)) continue;
-                var score = Confidence(info.Name, info.Path, info.Title, process.Id, foreground, "", 0, "NO_PUBLIC_SOCKET", false);
-                if (!IsStrongProcessCandidate(info.Name, info.Path, info.Title, process.Id, foreground, score)) continue;
-                result.Add(new GameEndpoint(info.Name, process.Id, "", "", 0, "NO_PUBLIC_SOCKET", true, score, info.Path));
-            }
-            catch { }
-            finally { process.Dispose(); }
-        }
-
         return result
             .GroupBy(x => x.Pid)
             .SelectMany(group =>
@@ -117,6 +124,12 @@ public static class GameScanner
             .Select(g => g.OrderByDescending(x => x.Confidence).First())
             .OrderByDescending(x => x.Confidence)
             .ToList();
+    }
+
+    static bool IsCrossFire(string name)
+    {
+        var process = Path.GetFileNameWithoutExtension(name ?? "");
+        return CrossFireWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
     }
 
     static bool TryGetProcessInfo(int pid, out (string Name, string Path, string Title) info)
@@ -143,6 +156,7 @@ public static class GameScanner
         var lowerPath = (path ?? "").ToLowerInvariant();
         var lowerTitle = (title ?? "").ToLowerInvariant();
         var known = GameWords.Any(w => lowerProcess.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var crossfire = IsCrossFire(process);
         var folder = GameFolders.Any(w => lowerPath.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureName = FutureGameWords.Any(w => lowerProcess.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureTitle = FutureGameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
@@ -150,6 +164,7 @@ public static class GameScanner
         var hasTitle = !string.IsNullOrWhiteSpace(title);
         var systemPath = lowerPath.Contains("\\windows\\") || lowerPath.Contains("\\system32\\") || lowerPath.Contains("\\windowsapps\\");
         if (systemPath) return false;
+        if (crossfire) return true;
         if (known && score >= 45) return true;
         if (folder && score >= 45) return true;
         if (foregroundProcessCandidate && hasTitle && (futureName || futureTitle) && score >= 45) return true;
@@ -188,6 +203,7 @@ public static class GameScanner
 
         var score = 0;
         var knownGameName = GameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
+        var crossfire = IsCrossFire(name);
         var gameFolder = GameFolders.Any(f => lowerPath.Contains(f, StringComparison.OrdinalIgnoreCase));
         var gameTitle = GameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
         var foregroundProcess = pid == foreground;
@@ -198,6 +214,7 @@ public static class GameScanner
         var launcher = LauncherWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureName = FutureGameWords.Any(w => process.Contains(w, StringComparison.OrdinalIgnoreCase));
         var futureTitle = FutureGameWords.Any(w => lowerTitle.Contains(w, StringComparison.OrdinalIgnoreCase));
+        if (crossfire) score += 75;
         if (knownGameName) score += 55;
         if (gameFolder) score += 30;
         if (gameTitle) score += 20;
@@ -210,7 +227,7 @@ public static class GameScanner
         if (futureName) score += 20;
         if (futureTitle) score += 18;
         if (!hasPublicSocket && foregroundProcess && hasWindowTitle && (futureName || futureTitle)) score += 10;
-        if (!foregroundProcess && !knownGameName && !gameFolder && !gameTitle) score -= 20;
+        if (!foregroundProcess && !knownGameName && !gameFolder && !gameTitle && !crossfire) score -= 20;
         return Math.Clamp(score, 0, 100);
     }
 
