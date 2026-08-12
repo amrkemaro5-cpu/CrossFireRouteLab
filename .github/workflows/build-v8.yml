@@ -1,0 +1,53 @@
+name: Game Route Lab v8
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-v8:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore CrossFireRouteLab.csproj
+
+      - name: Build v8
+        run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
+
+      - name: Publish Windows x64 self-contained
+        run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -o publish-v8
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = Get-Item publish-v8\GameRouteLab.exe
+          if ($exe.Length -lt 100KB) { throw 'GameRouteLab.exe is unexpectedly small.' }
+          Write-Host "v8 executable: $($exe.Length) bytes"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package-v8 | Out-Null
+          Copy-Item publish-v8\* package-v8\ -Recurse -Force
+          Copy-Item README.md package-v8\README.md -Force
+          if (Test-Path USER_GUIDE.md) { Copy-Item USER_GUIDE.md package-v8\USER_GUIDE.md -Force }
+          Compress-Archive -Path package-v8\* -DestinationPath GameRouteLab-v8-Windows-x64.zip -Force
+
+      - name: Upload v8 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameRouteLab-v8-Windows-x64
+          path: GameRouteLab-v8-Windows-x64.zip
+          if-no-files-found: error
