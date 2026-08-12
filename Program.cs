@@ -21,7 +21,7 @@ internal static class Program
             // v10 is the active dashboard. It deliberately does not install a
             // CrossFire window guard and never changes WindowState, activation,
             // TopMost, focus or fullscreen behavior.
-            var dashboard = new GameRouteLabV9Form();
+            var dashboard = new GameRouteLabV10Form();
             BindTelemetryText(dashboard);
             Application.Run(dashboard);
         }
@@ -31,12 +31,10 @@ internal static class Program
         }
     }
 
-    static void BindTelemetryText(GameRouteLabV9Form form)
+    static void BindTelemetryText(GameRouteLabV10Form form)
     {
-        // The v9 dashboard already owns animated telemetry cards. This binds
-        // their live labels without adding another timer or layout loop.
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        var type = typeof(GameRouteLabV9Form);
+        var type = typeof(GameRouteLabV10Form);
         var networkPanel = (Control?)type.GetField("network", flags)?.GetValue(form);
         var routerPanel = (Control?)type.GetField("router", flags)?.GetValue(form);
         var networkText = (Control?)type.GetField("netText", flags)?.GetValue(form);
