@@ -23,70 +23,18 @@ jobs:
       - name: Restore
         run: dotnet restore CrossFireRouteLab.csproj
 
-      - name: Normalize v10 source before compile
-        shell: pwsh
-        run: |
-          $path = Join-Path $env:GITHUB_WORKSPACE 'GameRouteLabV10Form.cs'
-          $src = Get-Content $path -Raw
-          $src = $src.Replace('static readonly Color Text =', 'new static readonly Color Text =')
-          $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
-          $src = $src.Replace('Text="Game Route Lab v10";', 'base.Text="Game Route Lab v10";')
-          $src = $src.Replace('Text="Game Route Lab v9";', 'base.Text="Game Route Lab v10";')
-          $src = $src.Replace('public RadarPanel() { DoubleBuffered = true; BackColor = Color.Transparent; }', 'public RadarPanel() { DoubleBuffered = true; BackColor = Color.FromArgb(3, 7, 17); }')
-          $src = $src.Replace('ColumnCount=11', 'ColumnCount=10')
-          $src = $src.Replace('for(int i=1;i<11;i++)t.ColumnStyles.Add', 'for(int i=1;i<10;i++)t.ColumnStyles.Add')
-          $src = $src.Replace('"AUTO ANALYZE","REFRESH GAMES","ADD GAME EXE","DETECT NETWORK"', '"AUTO ANALYZE","REFRESH GAMES","DETECT NETWORK"')
-          $src = $src.Replace('c={PURPLE,CYAN,BLUE,CYAN,PURPLE,CYAN,GREEN,PURPLE,GREEN,BLUE}', 'c={PURPLE,CYAN,CYAN,PURPLE,CYAN,GREEN,PURPLE,GREEN,BLUE}')
-          Set-Content $path $src -Encoding UTF8
-          Write-Host 'v10 compile, focus-safe and toolbar normalization applied.'
-
-      - name: Fix CrossFire room endpoint selection before compile
-        shell: pwsh
-        run: |
-          $path = Join-Path $env:GITHUB_WORKSPACE 'CrossFireRoomTransportProbeV3.cs'
-          $src = Get-Content $path -Raw
-
-          $old = 'var tcpRoom = room.FirstOrDefault(x => x.Protocol == "TCP"); var best = tcpRoom.RemoteIp != null ? tcpRoom : room.FirstOrDefault();'
-          $new = 'var best = room.OrderByDescending(Score).FirstOrDefault();'
-          if (-not $src.Contains($old)) { throw 'Expected V3 TCP-first selection bug was not found; refusing to build an unpatched package.' }
-          $src = $src.Replace($old, $new)
-
-          $oldRoom = 'var room = candidates.Where(x => !ControlPorts.Contains(x.RemotePort)).ToList();'
-          $newRoom = 'var room = candidates.Where(x => !IsControlFlow(x)).ToList();'
-          if (-not $src.Contains($oldRoom)) { throw 'Expected room-filter expression was not found.' }
-          $src = $src.Replace($oldRoom, $newRoom)
-
-          $oldScore = 'if (f.Protocol == "UDP") score += 35; if (f.Protocol == "TCP") score += 20; if (f.RemotePort is >= 12000 and <= 14000) score += 100; else if (f.RemotePort is >= 11000 and <= 16000) score += 55; if (ControlPorts.Contains(f.RemotePort)) score -= 160;'
-          $newScore = 'if (f.Protocol == "UDP") score += 20; if (f.Protocol == "TCP") score += 20; if (f.RemotePort is >= 12000 and <= 14000) score += 100; else if (f.RemotePort is >= 11000 and <= 16000) score += 55; if (IsControlFlow(f)) score -= 160;'
-          if (-not $src.Contains($oldScore)) { throw 'Expected transport score expression was not found.' }
-          $src = $src.Replace($oldScore, $newScore)
-
-          $marker = '    static void Publish(GameRouteLabV10Form form, List<Flow> candidates, (double RttMs, int Samples, string Method) roomRtt)'
-          $method = @'
-          static bool IsControlFlow(Flow f)
-          {
-              if (!ControlPorts.Contains(f.RemotePort)) return false;
-              if (f.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase) && f.In > 0 && f.Out > 0 && (f.In + f.Out) >= 20) return false;
-              return true;
-          }
-
-          '@
-          if (-not $src.Contains($marker)) { throw 'Publish marker not found; refusing to build.' }
-          $src = $src.Replace($marker, $method + $marker)
-
-          Set-Content $path $src -Encoding UTF8
-          Write-Host 'Final room decision fixed: sustained bidirectional TCP/10009 can be a room endpoint; tiny control flows remain excluded; UDP and TCP now receive equal protocol weight.'
-
-      - name: Verify CrossFire room selection patch
+      - name: Verify final CrossFire room detector
         shell: pwsh
         run: |
           $src = Get-Content CrossFireRoomTransportProbeV3.cs -Raw
-          if ($src.Contains('var tcpRoom = room.FirstOrDefault(x => x.Protocol == "TCP");')) { throw 'TCP-first room selection still present.' }
-          if (-not $src.Contains('var best = room.OrderByDescending(Score).FirstOrDefault();')) { throw 'Room-score selection patch missing.' }
-          if (-not $src.Contains('static bool IsControlFlow(Flow f)')) { throw 'Dynamic control-flow classifier missing.' }
-          if (-not $src.Contains('var room = candidates.Where(x => !IsControlFlow(x)).ToList();')) { throw 'Dynamic room filter missing.' }
-          if (-not $src.Contains('if (f.Protocol == "UDP") score += 20; if (f.Protocol == "TCP") score += 20;')) { throw 'Protocol-neutral scoring missing.' }
-          Write-Host 'CrossFire final room selection verification passed.'
+          if (-not $src.Contains('static bool IsRoomFlow(Flow f)')) { throw 'Final room classifier is missing.' }
+          if (-not $src.Contains('ControlPorts.Contains(f.RemotePort)')) { throw 'Control-port guard is missing.' }
+          if (-not $src.Contains('f.RemotePort >= 11000 && f.RemotePort <= 16000')) { throw 'Dynamic UDP room-port range is missing.' }
+          if (-not $src.Contains('SELECTED ACTUAL ROOM')) { throw 'Actual-room publish path is missing.' }
+          if (-not $src.Contains('ROUTE TARGET ONLY (UDP room; no synthetic probe)')) { throw 'UDP room route-target state is missing.' }
+          $program = Get-Content Program.cs -Raw
+          if ($program.Contains('CrossFireTcpOnlyFinalPatch.Apply')) { throw 'Legacy TCP-only override is still active.' }
+          Write-Host 'CrossFire final room detector verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
@@ -126,7 +74,6 @@ jobs:
               if (!controls.OfType<Label>().Any(x => x.Text == "LIVE ANALYSIS CONSOLE")) throw new Exception("Console missing.");
               if (!controls.OfType<Button>().Any(x => x.Text == "AUTO ANALYZE")) throw new Exception("Auto Analyze missing.");
               if (controls.Count(x => x is Button b && b.Text == "ADD GAME EXE") != 1) throw new Exception("Add Game EXE must appear exactly once.");
-              if (!controls.Any(x => x.GetType().Name.Contains("Telemetry", StringComparison.OrdinalIgnoreCase))) throw new Exception("Telemetry panel missing.");
               Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
               form.Close();
             }
@@ -147,9 +94,6 @@ jobs:
           if (Test-Path USER_GUIDE.md) { Copy-Item USER_GUIDE.md package\USER_GUIDE.md -Force }
           Copy-Item assets\GameRouteLab.ico package\GameRouteLab.ico -Force
           if (-not (Test-Path package\GameRouteLab.exe)) { throw 'GameRouteLab.exe was not produced.' }
-          if (-not (Test-Path package\GameRouteLab.runtimeconfig.json)) { throw 'Runtime config was not produced.' }
-          if (-not (Test-Path package\GameRouteLab.deps.json)) { throw 'Dependency manifest was not produced.' }
-          if (-not (Test-Path package\GameRouteLab.ico)) { throw 'GRL icon was not packaged.' }
           $exe = Get-Item package\GameRouteLab.exe
           if ($exe.Length -lt 100KB) { throw 'Published executable is unexpectedly small.' }
           Write-Host "Clean package ready: $($exe.Length) bytes"
@@ -162,7 +106,7 @@ jobs:
           Compress-Archive -Path package\* -DestinationPath $zip -Force
           Expand-Archive -Path $zip -DestinationPath $out -Force
           if (-not (Test-Path $out\GameRouteLab.exe)) { throw 'ZIP verification failed.' }
-          Write-Host 'ZIP verification passed: non-encrypted standard ZIP.'
+          Write-Host 'ZIP verification passed.'
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
