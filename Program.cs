@@ -18,9 +18,10 @@ internal static class Program
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
 
-            // v10 deliberately does not install a CrossFire window guard and
-            // never changes WindowState, activation, focus, or TopMost status.
-            var dashboard = new GameRouteLabV10Form();
+            // v10 is the active dashboard. It deliberately does not install a
+            // CrossFire window guard and never changes WindowState, activation,
+            // TopMost, focus or fullscreen behavior.
+            var dashboard = new GameRouteLabV9Form();
             BindTelemetryText(dashboard);
             Application.Run(dashboard);
         }
@@ -30,15 +31,15 @@ internal static class Program
         }
     }
 
-    static void BindTelemetryText(GameRouteLabV10Form form)
+    static void BindTelemetryText(GameRouteLabV9Form form)
     {
-        // Keep the telemetry controls visually layered inside their animated
-        // cards without adding another UI timer or another layout engine.
+        // The v9 dashboard already owns animated telemetry cards. This binds
+        // their live labels without adding another timer or layout loop.
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        var type = typeof(GameRouteLabV10Form);
-        var networkPanel = (Control?)type.GetField("networkPanel", flags)?.GetValue(form);
-        var routerPanel = (Control?)type.GetField("routerPanel", flags)?.GetValue(form);
-        var networkText = (Control?)type.GetField("networkText", flags)?.GetValue(form);
+        var type = typeof(GameRouteLabV9Form);
+        var networkPanel = (Control?)type.GetField("network", flags)?.GetValue(form);
+        var routerPanel = (Control?)type.GetField("router", flags)?.GetValue(form);
+        var networkText = (Control?)type.GetField("netText", flags)?.GetValue(form);
         var routerText = (Control?)type.GetField("routerText", flags)?.GetValue(form);
         if (networkPanel != null && networkText != null) networkPanel.Controls.Add(networkText);
         if (routerPanel != null && routerText != null) routerPanel.Controls.Add(routerText);
@@ -47,36 +48,14 @@ internal static class Program
 
 internal static class CrashReporter
 {
-    static readonly string Root = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "GameRouteLab");
-
+    static readonly string Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameRouteLab");
     public static void Write(Exception ex, string source)
     {
-        try
-        {
-            Directory.CreateDirectory(Root);
-            var path = Path.Combine(Root, "startup-error.log");
-            File.AppendAllText(path,
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {source}\r\n{ex}\r\n\r\n");
-        }
-        catch { }
+        try { Directory.CreateDirectory(Root); File.AppendAllText(Path.Combine(Root, "startup-error.log"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {source}\r\n{ex}\r\n\r\n"); } catch { }
     }
-
     public static void Show(Exception ex, string source)
     {
         Write(ex, source);
-        try
-        {
-            MessageBox.Show(
-                "Game Route Lab could not start correctly.\r\n\r\n" +
-                "A diagnostic log was saved to:\r\n" +
-                Path.Combine(Root, "startup-error.log") + "\r\n\r\n" +
-                "Error: " + ex.Message,
-                "Game Route Lab — Startup Error",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
-        }
-        catch { }
+        try { MessageBox.Show("Game Route Lab could not start correctly.\r\n\r\nA diagnostic log was saved to:\r\n" + Path.Combine(Root, "startup-error.log") + "\r\n\r\nError: " + ex.Message, "Game Route Lab — Startup Error", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
     }
 }
