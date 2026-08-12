@@ -28,6 +28,7 @@ internal static class Program
             AutoOptimizationPatch.Apply(dashboard);
             EndpointMeasurementPatch.Apply(dashboard);
             CrossFireConnectionDiscoveryPatch.Apply(dashboard);
+            CrossFireRoomTransportPatch.Apply(dashboard);
             RouteOptimizerPatch.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
