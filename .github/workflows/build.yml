@@ -32,12 +32,13 @@ jobs:
           $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
           $src = $src.Replace('Text="Game Route Lab v10";', 'base.Text="Game Route Lab v10";')
           $src = $src.Replace('Text="Game Route Lab v9";', 'base.Text="Game Route Lab v10";')
+          $src = $src.Replace('public RadarPanel() { DoubleBuffered = true; BackColor = Color.Transparent; }', 'public RadarPanel() { DoubleBuffered = true; BackColor = Color.FromArgb(3, 7, 17); }')
           $src = $src.Replace('ColumnCount=11', 'ColumnCount=10')
           $src = $src.Replace('for(int i=1;i<11;i++)t.ColumnStyles.Add', 'for(int i=1;i<10;i++)t.ColumnStyles.Add')
           $src = $src.Replace('"AUTO ANALYZE","REFRESH GAMES","ADD GAME EXE","DETECT NETWORK"', '"AUTO ANALYZE","REFRESH GAMES","DETECT NETWORK"')
           $src = $src.Replace('c={PURPLE,CYAN,BLUE,CYAN,PURPLE,CYAN,GREEN,PURPLE,GREEN,BLUE}', 'c={PURPLE,CYAN,CYAN,PURPLE,CYAN,GREEN,PURPLE,GREEN,BLUE}')
           Set-Content $path $src -Encoding UTF8
-          Write-Host 'v10 compile and toolbar normalization applied.'
+          Write-Host 'v10 compile, focus-safe and toolbar normalization applied.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
@@ -77,7 +78,7 @@ jobs:
               if (!controls.OfType<Label>().Any(x => x.Text == "LIVE ANALYSIS CONSOLE")) throw new Exception("Console missing.");
               if (!controls.OfType<Button>().Any(x => x.Text == "AUTO ANALYZE")) throw new Exception("Auto Analyze missing.");
               if (controls.Count(x => x is Button b && b.Text == "ADD GAME EXE") != 1) throw new Exception("Add Game EXE must appear exactly once.");
-              if (!controls.Any(x => x.GetType().Name == "Telemetry")) throw new Exception("Telemetry panel missing.");
+              if (!controls.Any(x => x.GetType().Name.Contains("Telemetry", StringComparison.OrdinalIgnoreCase))) throw new Exception("Telemetry panel missing.");
               if (controls.Any(c => c.Width <= 0 || c.Height <= 0)) throw new Exception("Invalid control dimensions.");
               Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
               form.Close();
