@@ -10,12 +10,11 @@ namespace CrossFireRouteLab;
 /// <summary>
 /// CrossFire-specific connection discovery layer.
 ///
-/// The v10 dashboard was still reading only sockets whose PID exactly matched
-/// the selected game process. CrossFire can expose the lobby/master socket in
-/// one process while the active room/session sockets are owned by a sibling or
-/// helper process from the same installation directory. This patch discovers
-/// the whole CrossFire process family and keeps a short-lived history so short
-/// room connections are not lost between two netstat snapshots.
+/// CrossFire can expose the lobby/master socket in one process while active
+/// room/session sockets are owned by a sibling/helper process from the same
+/// installation directory. This patch discovers the whole CrossFire process
+/// family and keeps a short-lived history so short room connections are not
+/// lost between netstat snapshots.
 /// </summary>
 internal static class CrossFireConnectionDiscoveryPatch
 {
@@ -28,6 +27,22 @@ internal static class CrossFireConnectionDiscoveryPatch
     static readonly string[] CrossFireNames =
     {
         "crossfire", "crossfire_x64", "crossfire64", "crossfireclient", "crossfireclient64"
+    };
+
+    // Room/game sockets seen in the supplied CrossFire captures and reports.
+    // These are preferred over launcher/CDN/control sockets. The fallback
+    // still accepts new room ports, so this is NOT a server/IP whitelist.
+    static readonly HashSet<int> PreferredGamePorts = new()
+    {
+        10009, 13008
+    };
+
+    // CrossFire may keep HTTPS/CDN/control connections alive at the same time
+    // as the actual room socket. A low RTT to TCP/443 must never be presented
+    // as the game's ping just because it is faster.
+    static readonly HashSet<int> WebOrControlPorts = new()
+    {
+        80, 443, 8080, 8443
     };
 
     static readonly string[] NoiseNames =
@@ -69,8 +84,18 @@ internal static class CrossFireConnectionDiscoveryPatch
             if (family.Count == 0) return;
 
             var text = await RunAsync("netstat.exe", "-n -o -p tcp", 2500).ConfigureAwait(false);
-            var endpoints = ParseTcp(text, family);
+            var allEndpoints = ParseTcp(text, family);
 
+            // IMPORTANT: CrossFire also keeps CDN/launcher HTTPS sockets alive.
+            // Those sockets can have a beautiful 30–50 ms RTT while the actual
+            // room server is 60–70 ms away. Never let TCP/443 become the
+            // "best game endpoint" merely because it measures faster.
+            var preferred = allEndpoints.Where(IsPreferredGameEndpoint).ToList();
+            var nonWeb = allEndpoints.Where(e => !WebOrControlPorts.Contains(e.Port)).ToList();
+            var gameEndpoints = preferred.Count > 0 ? preferred : nonWeb;
+            var endpoints = gameEndpoints.Count > 0 ? gameEndpoints : allEndpoints;
+
+            var ignoredWebCount = allEndpoints.Count(e => WebOrControlPorts.Contains(e.Port));
             var now = DateTime.UtcNow;
             lock (sync)
             {
@@ -80,6 +105,9 @@ internal static class CrossFireConnectionDiscoveryPatch
                     seen[key] = new SeenEndpoint(endpoint.Ip, endpoint.Port, endpoint.Pid, endpoint.ProcessName, endpoint.State, now);
                 }
 
+                // Keep recent room/master endpoints for a short window. This is
+                // important for CrossFire because a room transition can replace
+                // a socket between two 1.2 s snapshots.
                 foreach (var stale in seen.Where(x => now - x.Value.LastSeenUtc > TimeSpan.FromSeconds(18)).Select(x => x.Key).ToList())
                     seen.Remove(stale);
             }
@@ -107,6 +135,8 @@ internal static class CrossFireConnectionDiscoveryPatch
                 .ToList();
 
             Publish(form, ranked);
+            if (ignoredWebCount > 0)
+                Log(form, $"[CROSSFIRE] {ignoredWebCount} web/CDN/control socket(s) ignored for room ranking (TCP 80/443/8080/8443).");
         }
         catch (Exception ex)
         {
@@ -166,6 +196,12 @@ internal static class CrossFireConnectionDiscoveryPatch
             result.Add(new TcpEndpoint(ip, port, pid, name, state));
         }
         return result;
+    }
+
+    static bool IsPreferredGameEndpoint(TcpEndpoint endpoint)
+    {
+        if (!endpoint.State.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)) return false;
+        return PreferredGamePorts.Contains(endpoint.Port);
     }
 
     static bool TrySplitEndpoint(string value, out string ip, out int port)
@@ -238,10 +274,13 @@ internal static class CrossFireConnectionDiscoveryPatch
 
                 if (candidates.Count > 0)
                 {
+                    // Do not force a new server. EndpointMeasurementPatch will
+                    // measure/rank this complete room candidate set and select
+                    // the best connection CrossFire is already using.
                     Log(form, $"[CROSSFIRE] {candidates.Count} room/master TCP candidate(s) visible across the CrossFire process family.");
                     var active = candidates.Where(c => c.State.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)).ToList();
                     if (active.Count > 1)
-                        Log(form, "[CROSSFIRE] Multiple ESTABLISHED TCP endpoints detected; endpoint ranking is now allowed to compare them instead of locking to the master socket.");
+                        Log(form, "[CROSSFIRE] Multiple ESTABLISHED room TCP endpoints detected; endpoint ranking may compare them instead of locking to the master socket.");
                 }
             }
             catch (Exception ex) { Log(form, "[CROSSFIRE] UI publish error: " + ex.Message); }
