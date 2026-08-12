@@ -6,16 +6,6 @@ using System.Text.RegularExpressions;
 
 namespace CrossFireRouteLab;
 
-/// <summary>
-/// CrossFire-specific connection discovery.
-///
-/// IMPORTANT: the old implementation treated 10009/13008 as the preferred
-/// endpoint and discarded every other TCP socket whenever one of those ports
-/// existed. That made the actual room socket disappear from the UI and from
-/// endpoint measurement. This version keeps ALL non-web CrossFire TCP sockets,
-/// labels the known master/control socket separately, and retains short-lived
-/// room sockets for several seconds so a transient room connection is not lost.
-/// </summary>
 internal static class CrossFireConnectionDiscoveryPatch
 {
     static System.Threading.Timer? timer;
@@ -24,27 +14,15 @@ internal static class CrossFireConnectionDiscoveryPatch
     static DateTime lastScanUtc = DateTime.MinValue;
     static readonly Dictionary<string, SeenEndpoint> seen = new(StringComparer.OrdinalIgnoreCase);
 
-    static readonly string[] CrossFireNames =
-    {
-        "crossfire", "crossfire_x64", "crossfire64", "crossfireclient", "crossfireclient64"
-    };
-
+    static readonly string[] CrossFireNames = { "crossfire", "crossfire_x64", "crossfire64", "crossfireclient", "crossfireclient64" };
     static readonly HashSet<int> WebOrControlPorts = new() { 80, 443, 8080, 8443 };
     static readonly HashSet<int> MasterPorts = new() { 10009, 13008 };
-
-    static readonly string[] NoiseNames =
-    {
-        "gameroutelab", "steamwebhelper", "steam", "chrome", "msedge", "firefox",
-        "discord", "powershell", "pwsh", "cmd", "conhost", "svchost", "explorer",
-        "searchhost", "searchindexer", "runtimebroker", "onedrive"
-    };
+    static readonly string[] NoiseNames = { "gameroutelab", "steamwebhelper", "steam", "chrome", "msedge", "firefox", "discord", "powershell", "pwsh", "cmd", "conhost", "svchost", "explorer", "searchhost", "searchindexer", "runtimebroker", "onedrive" };
 
     public static void Apply(Form form)
     {
         if (form.IsDisposed) return;
         timer?.Dispose();
-        // Faster polling matters because CrossFire can create/replace a room
-        // TCP socket between the old 1.2 s snapshots.
         timer = new System.Threading.Timer(_ => Tick(form), null, 1200, 550);
         form.FormClosed += (_, _) => { try { timer?.Dispose(); } catch { } timer = null; };
         Log(form, "[CROSSFIRE] Room TCP discovery fixed: ALL non-web TCP endpoints are retained; 10009/13008 are labeled master/control only.");
@@ -70,7 +48,6 @@ internal static class CrossFireConnectionDiscoveryPatch
         {
             var family = await Task.Run(() => DiscoverFamily(gamePid)).ConfigureAwait(false);
             if (family.Count == 0) return;
-
             var text = await RunAsync("netstat.exe", "-n -o -p tcp", 1800).ConfigureAwait(false);
             var all = ParseTcp(text, family);
             var visible = all.Where(e => !WebOrControlPorts.Contains(e.Port)).ToList();
@@ -83,16 +60,13 @@ internal static class CrossFireConnectionDiscoveryPatch
                     var key = $"{endpoint.Ip}:{endpoint.Port}";
                     seen[key] = new SeenEndpoint(endpoint.Ip, endpoint.Port, endpoint.Pid, endpoint.ProcessName, endpoint.State, now);
                 }
-
-                // Keep a short history so a room socket that existed briefly
-                // during login/room transition remains visible for measurement.
                 foreach (var stale in seen.Where(x => now - x.Value.LastSeenUtc > TimeSpan.FromSeconds(8)).Select(x => x.Key).ToList())
                     seen.Remove(stale);
             }
 
             var candidates = new List<Candidate>();
             foreach (var endpoint in visible)
-                candidates.Add(new Candidate(endpoint.Ip, endpoint.Port, endpoint.Pid, endpoint.ProcessName, endpoint.State, now, true));
+                candidates.Add(new Candidate(endpoint.Ip, endpoint.Port, endpoint.Pid, endpoint.ProcessName, endpoint.State, true, now));
 
             lock (sync)
             {
@@ -108,21 +82,15 @@ internal static class CrossFireConnectionDiscoveryPatch
             var ranked = candidates
                 .GroupBy(x => $"{x.Ip}:{x.Port}", StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(x => x.Current).ThenByDescending(x => x.LastSeenUtc).First())
-                // Active non-master sockets first. Known master/control ports are
-                // deliberately last so they cannot hide a live room transport.
                 .OrderByDescending(x => x.Current && x.State.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) && !MasterPorts.Contains(x.Port))
                 .ThenByDescending(x => x.Current && x.State.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase))
                 .ThenByDescending(x => !MasterPorts.Contains(x.Port))
                 .ThenByDescending(x => x.LastSeenUtc)
                 .Take(30)
                 .ToList();
-
             Publish(form, ranked);
         }
-        catch (Exception ex)
-        {
-            Log(form, "[CROSSFIRE] Connection discovery stopped safely: " + ex.Message);
-        }
+        catch (Exception ex) { Log(form, "[CROSSFIRE] Connection discovery stopped safely: " + ex.Message); }
         finally { running = false; }
     }
 
@@ -135,7 +103,6 @@ internal static class CrossFireConnectionDiscoveryPatch
             var rootPath = SafePath(root);
             var rootDir = string.IsNullOrWhiteSpace(rootPath) ? "" : Path.GetDirectoryName(rootPath) ?? "";
             var rootName = root.ProcessName;
-
             foreach (var p in Process.GetProcesses())
             {
                 try
@@ -144,8 +111,7 @@ internal static class CrossFireConnectionDiscoveryPatch
                     if (NoiseNames.Any(n => name.Equals(n, StringComparison.OrdinalIgnoreCase))) continue;
                     var path = SafePath(p);
                     var sameCrossFireName = IsCrossFireName(name);
-                    var sameInstall = !string.IsNullOrWhiteSpace(rootDir) && !string.IsNullOrWhiteSpace(path) &&
-                                      Path.GetDirectoryName(path)?.Equals(rootDir, StringComparison.OrdinalIgnoreCase) == true;
+                    var sameInstall = !string.IsNullOrWhiteSpace(rootDir) && !string.IsNullOrWhiteSpace(path) && Path.GetDirectoryName(path)?.Equals(rootDir, StringComparison.OrdinalIgnoreCase) == true;
                     var sameExe = name.Equals(rootName, StringComparison.OrdinalIgnoreCase);
                     if (sameCrossFireName || sameInstall || sameExe) result.Add(p.Id);
                 }
@@ -165,9 +131,7 @@ internal static class CrossFireConnectionDiscoveryPatch
             var m = Regex.Match(line, @"^\s*TCP\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s*$", RegexOptions.IgnoreCase);
             if (!m.Success || !int.TryParse(m.Groups[4].Value, out var pid) || !family.Contains(pid)) continue;
             var state = m.Groups[3].Value.Trim();
-            if (!state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) &&
-                !state.Equals("SYN_SENT", StringComparison.OrdinalIgnoreCase) &&
-                !state.Equals("SYN_RECEIVED", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase) && !state.Equals("SYN_SENT", StringComparison.OrdinalIgnoreCase) && !state.Equals("SYN_RECEIVED", StringComparison.OrdinalIgnoreCase)) continue;
             if (!TrySplitEndpoint(m.Groups[2].Value, out var ip, out var port)) continue;
             if (!IsPublic(ip) || port <= 0) continue;
             string name = "crossfire";
@@ -224,29 +188,22 @@ internal static class CrossFireConnectionDiscoveryPatch
                 var itemType = list.GetType().GetGenericArguments().FirstOrDefault();
                 if (itemType == null) return;
                 list.Clear();
-
                 foreach (var c in candidates)
                 {
                     var state = MasterPorts.Contains(c.Port) ? $"{c.State} • MASTER/CONTROL" : $"{c.State} • ROOM CANDIDATE";
-                    var item = Activator.CreateInstance(itemType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                        null, new object[] { c.Ip, c.Port, "TCP", state }, null);
+                    var item = Activator.CreateInstance(itemType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null,
+                        new object[] { c.Ip, c.Port, "TCP", state }, null);
                     if (item != null) list.Add(item);
                 }
-
                 if (type.GetField("connectionText", flags)?.GetValue(form) is Label connectionText)
                 {
-                    connectionText.Text = candidates.Count == 0
-                        ? "No public CrossFire TCP endpoint visible yet."
-                        : string.Join("\r\n", candidates.Take(10).Select(c =>
-                            $"TCP  {c.Ip}:{c.Port,-5}  {(MasterPorts.Contains(c.Port) ? "MASTER" : "ROOM") ,-6}  {c.State,-18} PID {c.Pid}"));
+                    connectionText.Text = candidates.Count == 0 ? "No public CrossFire TCP endpoint visible yet." :
+                        string.Join("\r\n", candidates.Take(10).Select(c => $"TCP  {c.Ip}:{c.Port,-5}  {(MasterPorts.Contains(c.Port) ? "MASTER" : "ROOM"),-6}  {c.State,-18} PID {c.Pid}"));
                 }
-
-                var room = candidates.Where(c => !MasterPorts.Contains(c.Port) &&
-                    c.State.Contains("ESTABLISHED", StringComparison.OrdinalIgnoreCase)).ToList();
+                var room = candidates.Where(c => !MasterPorts.Contains(c.Port) && c.State.Contains("ESTABLISHED", StringComparison.OrdinalIgnoreCase)).ToList();
                 var master = candidates.Count(c => MasterPorts.Contains(c.Port));
                 Log(form, $"[CROSSFIRE] TCP discovery: {candidates.Count} endpoint(s) retained ({room.Count} active room candidate(s), {master} master/control).");
-                if (room.Count > 0)
-                    Log(form, "[CROSSFIRE] Active room TCP is exposed separately from 10009/13008; endpoint measurement can now compare it directly.");
+                if (room.Count > 0) Log(form, "[CROSSFIRE] Active room TCP is exposed separately from 10009/13008; endpoint measurement can now compare it directly.");
             }
             catch (Exception ex) { Log(form, "[CROSSFIRE] UI publish error: " + ex.Message); }
         }));
@@ -256,17 +213,11 @@ internal static class CrossFireConnectionDiscoveryPatch
     {
         try
         {
-            using var p = Process.Start(new ProcessStartInfo(file, args)
-            {
-                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true,
-                RedirectStandardError = true, StandardOutputEncoding = Encoding.ASCII
-            });
+            using var p = Process.Start(new ProcessStartInfo(file, args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.ASCII });
             if (p == null) return "";
-            var output = p.StandardOutput.ReadToEndAsync();
-            var error = p.StandardError.ReadToEndAsync();
+            var output = p.StandardOutput.ReadToEndAsync(); var error = p.StandardError.ReadToEndAsync();
             using var cts = new CancellationTokenSource(timeoutMs);
-            try { await p.WaitForExitAsync(cts.Token).ConfigureAwait(false); }
-            catch { try { p.Kill(true); } catch { } }
+            try { await p.WaitForExitAsync(cts.Token).ConfigureAwait(false); } catch { try { p.Kill(true); } catch { } }
             return await output.ConfigureAwait(false) + "\r\n" + await error.ConfigureAwait(false);
         }
         catch { return ""; }
