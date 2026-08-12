@@ -40,6 +40,32 @@ jobs:
           Set-Content $path $src -Encoding UTF8
           Write-Host 'v10 compile, focus-safe and toolbar normalization applied.'
 
+      - name: Fix CrossFire room endpoint selection before compile
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:GITHUB_WORKSPACE 'CrossFireRoomTransportProbeV3.cs'
+          $src = Get-Content $path -Raw
+          $old = 'var tcpRoom = room.FirstOrDefault(x => x.Protocol == "TCP"); var best = tcpRoom.RemoteIp != null ? tcpRoom : room.FirstOrDefault();'
+          $new = 'var best = room.OrderByDescending(Score).FirstOrDefault();'
+          if (-not $src.Contains($old)) { throw 'Expected V3 TCP-first selection bug was not found; refusing to build an unpatched package.' }
+          $src = $src.Replace($old, $new)
+          Set-Content $path $src -Encoding UTF8
+
+          $ui = Join-Path $env:GITHUB_WORKSPACE 'CrossFireRoomLatencyUiPatch.cs'
+          $u = Get-Content $ui -Raw
+          $u = $u.Replace('● ACTUAL ROOM • {protocol} • RTT PENDING', '● ACTUAL ROOM • {protocol} • RTT NOT DERIVED')
+          $u = $u.Replace('STATUS     PASSIVE RTT PENDING', 'STATUS     RTT NOT DERIVED')
+          Set-Content $ui $u -Encoding UTF8
+          Write-Host 'CrossFire V3 room selection patched: highest-scoring bidirectional room flow wins; TCP 10009 can no longer hijack the room target.'
+
+      - name: Verify CrossFire room selection patch
+        shell: pwsh
+        run: |
+          $src = Get-Content CrossFireRoomTransportProbeV3.cs -Raw
+          if ($src.Contains('var tcpRoom = room.FirstOrDefault(x => x.Protocol == "TCP");')) { throw 'TCP-first room selection still present.' }
+          if (-not $src.Contains('var best = room.OrderByDescending(Score).FirstOrDefault();')) { throw 'Room-score selection patch missing.' }
+          Write-Host 'CrossFire room selection verification passed.'
+
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
 
