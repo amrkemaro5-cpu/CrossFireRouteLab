@@ -15,7 +15,6 @@ internal static class CrossFireTcpOnlyFinalPatch
 {
     static System.Threading.Timer? timer;
     static bool armed;
-    static readonly object Sync = new();
     static string lastTarget = "";
     static DateTime lastLog = DateTime.MinValue;
 
@@ -27,8 +26,6 @@ internal static class CrossFireTcpOnlyFinalPatch
         if (armed || form.IsDisposed) return;
         armed = true;
 
-        // These older layers were the source of UDP candidates. They are left in
-        // the project for history/compatibility, but are no longer allowed to run.
         StopTimer("CrossFireRoomTransportPatch");
         StopTimer("CrossFirePacketRoomDiscoveryPatchV2");
         StopTimer("CrossFireRoomTransportProbeV3");
@@ -51,9 +48,7 @@ internal static class CrossFireTcpOnlyFinalPatch
             if (type.GetField("gamePid", flags)?.GetValue(form) is not int pid || pid <= 0) return;
             var gameName = type.GetField("gameName", flags)?.GetValue(form)?.ToString() ?? "";
             if (!gameName.Contains("crossfire", StringComparison.OrdinalIgnoreCase)) return;
-
-            var found = ReadTcpConnections(form, pid);
-            Publish(form, found);
+            Publish(form, ReadTcpConnections(pid));
         }
         catch (Exception ex)
         {
@@ -65,10 +60,8 @@ internal static class CrossFireTcpOnlyFinalPatch
         }
     }
 
-    static List<TcpCandidate> ReadTcpConnections(GameRouteLabV10Form form, int pid)
+    static List<TcpCandidate> ReadTcpConnections(int pid)
     {
-        // The main form already uses netstat -ano -p tcp. Re-read it here so the
-        // final TCP-only layer is independent of any UDP-capable legacy patch.
         var text = Run("netstat.exe", "-ano -p tcp", 1800);
         var result = new List<TcpCandidate>();
         foreach (var raw in text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
@@ -86,8 +79,6 @@ internal static class CrossFireTcpOnlyFinalPatch
             result.Add(new TcpCandidate(ip, port, state));
         }
 
-        // Prefer a live non-control TCP connection when one exists. Otherwise the
-        // known CrossFire TCP server ports are still shown as a legitimate fallback.
         return result
             .GroupBy(x => $"{x.Ip}:{x.Port}", StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
@@ -110,8 +101,11 @@ internal static class CrossFireTcpOnlyFinalPatch
                 var type = typeof(GameRouteLabV10Form);
                 var active = candidates.Where(x => x.State.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)).ToList();
                 var room = active.Where(x => !IsKnownControlPort(x.Port)).ToList();
-                var best = room.FirstOrDefault() ?? active.FirstOrDefault() ?? candidates.FirstOrDefault();
-                if (best.Ip.Length == 0) return;
+                TcpCandidate best;
+                if (room.Count > 0) best = room[0];
+                else if (active.Count > 0) best = active[0];
+                else if (candidates.Count > 0) best = candidates[0];
+                else return;
 
                 type.GetField("endpoint", flags)?.SetValue(form, best.Ip);
                 type.GetField("endpointPort", flags)?.SetValue(form, best.Port);
@@ -169,8 +163,6 @@ internal static class CrossFireTcpOnlyFinalPatch
                     Log(form, $"[TCP ONLY] CrossFire TCP target = {target} • {(fallback ? "server/control fallback" : "live room/server candidate")}. UDP is ignored.");
                 }
 
-                // Keep the normal TCP endpoint measurement alive as the source of
-                // latency. No UDP ping/probe is performed here.
                 var samples = await TcpSamples(best.Ip, best.Port, 3).ConfigureAwait(true);
                 if (samples.Count > 0 && !form.IsDisposed)
                 {
