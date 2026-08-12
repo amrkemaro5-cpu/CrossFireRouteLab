@@ -27,6 +27,7 @@ internal static class Program
             CrossFireConnectionDiscoveryPatch.Apply(dashboard);
             CrossFireRoomTransportPatch.Apply(dashboard);
             CrossFirePacketRoomDiscoveryPatchV2.Apply(dashboard);
+            CrossFireAiRoutePatch.Apply(dashboard);
             CrossFireRoomTransportProbeV3.Apply(dashboard);
             CrossFireRoomLatencyUiPatch.Apply(dashboard);
             RouteOptimizerPatch.Apply(dashboard);
