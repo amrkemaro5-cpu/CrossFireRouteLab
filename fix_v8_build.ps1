@@ -7,7 +7,9 @@ $s = Get-Content $p -Raw
 $s = $s -replace 'static readonly Color V8Colors\.TextColor\s*=', 'static readonly Color TextColor ='
 $s = $s -replace 'static readonly Color Text\s*=', 'static readonly Color TextColor ='
 $s = $s -replace '\bV8Colors\.TextColor\b', 'TextColor'
-$s = $s -replace '(?m)(ForeColor\s*=\s*)Text(\s*;)', '${1}TextColor$2'
+$s = $s -replace 'ForeColor\s*=\s*Text\b', 'ForeColor = TextColor'
+# The custom header controls are outside GameRouteLabV8Form and use the shared palette class.
+$s = $s -replace 'new SolidBrush\(TextColor\)', 'new SolidBrush(V8Colors.TextColor)'
 
 # These labels are intentionally reassigned when the center dashboard is built,
 # so they must not be readonly fields.
