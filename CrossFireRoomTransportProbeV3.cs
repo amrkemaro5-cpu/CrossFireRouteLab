@@ -35,9 +35,7 @@ internal static class CrossFireRoomTransportProbeV3
     }
 
     static void StopTimer(string typeName)
-    {
-        try { var type = typeof(Program).Assembly.GetType("CrossFireRouteLab." + typeName); var field = type?.GetField("timer", BindingFlags.Static | BindingFlags.NonPublic); if (field?.GetValue(null) is IDisposable d) d.Dispose(); field?.SetValue(null, null); } catch { }
-    }
+    { try { var type = typeof(Program).Assembly.GetType("CrossFireRouteLab." + typeName); var field = type?.GetField("timer", BindingFlags.Static | BindingFlags.NonPublic); if (field?.GetValue(null) is IDisposable d) d.Dispose(); field?.SetValue(null, null); } catch { } }
 
     static void Tick(GameRouteLabV10Form form)
     {
@@ -46,10 +44,10 @@ internal static class CrossFireRoomTransportProbeV3
         if (type.GetField("gamePid", flags)?.GetValue(form) is not int pid || pid <= 0) return;
         var gameName = type.GetField("gameName", flags)?.GetValue(form)?.ToString() ?? "";
         if (!gameName.Contains("crossfire", StringComparison.OrdinalIgnoreCase)) return;
-        lastRun = DateTime.UtcNow; running = true; _ = Task.Run(() => Capture(form, pid));
+        lastRun = DateTime.UtcNow; running = true; _ = Task.Run(() => Capture(form));
     }
 
-    static async Task Capture(GameRouteLabV10Form form, int pid)
+    static async Task Capture(GameRouteLabV10Form form)
     {
         string root = Path.Combine(Path.GetTempPath(), "GameRouteLab", "CrossFireRoomCaptureV3"); Directory.CreateDirectory(root);
         string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmssfff"), etl = Path.Combine(root, $"room-{stamp}.etl"), pcap = Path.Combine(root, $"room-{stamp}.pcapng");
@@ -63,10 +61,10 @@ internal static class CrossFireRoomTransportProbeV3
             if (!File.Exists(etl)) { Log(form, "[CROSSFIRE] Capture produced no ETL file."); return; }
             var converted = await RunAsync("pktmon.exe", $"etl2pcap {Quote(etl)} --out {Quote(pcap)}", 15000).ConfigureAwait(false);
             if (converted.ExitCode != 0 || !File.Exists(pcap)) { Log(form, "[CROSSFIRE] ETL → PCAPNG conversion failed."); return; }
-            var capture = ParsePcapNg(pcap, GetLocalIPv4s());
-            var flows = AggregateFlows(capture);
+            var packets = ParsePcapNg(pcap, GetLocalIPv4s());
+            var flows = AggregateFlows(packets);
             var candidates = flows.Values.Where(x => x.In > 0 && x.Out > 0 && IsPublic(x.RemoteIp) && !NoisePorts.Contains(x.RemotePort)).OrderByDescending(Score).Take(20).ToList();
-            var roomRtt = MeasureTcpRtt(capture, candidates); passiveRtt = roomRtt.RttMs; passiveSamples = roomRtt.Samples; passiveMethod = roomRtt.Method;
+            var roomRtt = MeasureTcpRtt(packets, candidates); passiveRtt = roomRtt.RttMs; passiveSamples = roomRtt.Samples; passiveMethod = roomRtt.Method;
             if (candidates.Count == 0) { Log(form, "[CROSSFIRE] Capture proved no bidirectional public room flow in this window."); passiveRtt = -1; passiveSamples = 0; passiveMethod = ""; return; }
             Publish(form, candidates, roomRtt);
         }
@@ -84,7 +82,7 @@ internal static class CrossFireRoomTransportProbeV3
             {
                 if (type == 0x00000001 && length >= 20)
                 {
-                    br.ReadUInt16(); br.ReadUInt16(); br.ReadUInt32(); br.ReadUInt32(); br.ReadUInt32(); br.ReadUInt32();
+                    br.ReadUInt16(); br.ReadUInt16(); br.ReadUInt32();
                     while (fs.Position + 4 <= end - 4) { ushort code = br.ReadUInt16(), len = br.ReadUInt16(); if (code == 0) break; if (len > end - 4 - fs.Position) break; var data = br.ReadBytes(len); SkipPad(br, len); if (code == 9 && data.Length > 0) { byte v = data[0]; tsUnitSeconds = (v & 0x80) == 0 ? Math.Pow(10, -(v & 0x7f)) : Math.Pow(2, -(v & 0x7f)); } }
                 }
                 else if ((type == 0x00000006 || type == 0x00000002) && length >= 32)
@@ -118,15 +116,13 @@ internal static class CrossFireRoomTransportProbeV3
         if (protocol == 6)
         {
             if (packet.Length < transport + 20) return false; seq = U32(packet, transport + 4); ack = U32(packet, transport + 8); flags = packet[transport + 13]; int tcpLen = ((packet[transport + 12] >> 4) & 0x0f) * 4; if (tcpLen < 20 || packet.Length < transport + tcpLen) return false; payloadOffset = transport + tcpLen;
-            for (int p = transport + 20, end = transport + tcpLen; p + 1 < end; ) { byte kind = packet[p]; if (kind == 0) break; if (kind == 1) { p++; continue; } int len = packet[p + 1]; if (len < 2 || p + len > end) break; if (kind == 8 && len == 10) { tsval = U32(packet, p + 2); tsecr = U32(packet, p + 6); hasTs = true; } p += len; }
+            for (int p = transport + 20, e = transport + tcpLen; p + 1 < e; ) { byte kind = packet[p]; if (kind == 0) break; if (kind == 1) { p++; continue; } int len = packet[p + 1]; if (len < 2 || p + len > e) break; if (kind == 8 && len == 10) { tsval = U32(packet, p + 2); tsecr = U32(packet, p + 6); hasTs = true; } p += len; }
         }
         int payloadLen = Math.Max(0, ipEnd - payloadOffset); result = new CapturedPacket(ts, remote, remotePort, proto, srcLocal, seq, ack, flags, payloadLen, tsval, tsecr, hasTs); return true;
     }
 
     static Dictionary<string, Flow> AggregateFlows(List<CapturedPacket> packets)
-    {
-        var result = new Dictionary<string, Flow>(StringComparer.OrdinalIgnoreCase); foreach (var p in packets) { string key = $"{p.Protocol}|{p.RemoteIp}:{p.RemotePort}"; if (!result.TryGetValue(key, out var f)) f = new Flow(p.RemoteIp, p.RemotePort, p.Protocol, 0, 0); result[key] = p.Outbound ? f with { Out = f.Out + 1 } : f with { In = f.In + 1 }; } return result;
-    }
+    { var result = new Dictionary<string, Flow>(StringComparer.OrdinalIgnoreCase); foreach (var p in packets) { string key = $"{p.Protocol}|{p.RemoteIp}:{p.RemotePort}"; if (!result.TryGetValue(key, out var f)) f = new Flow(p.RemoteIp, p.RemotePort, p.Protocol, 0, 0); result[key] = p.Outbound ? f with { Out = f.Out + 1 } : f with { In = f.In + 1 }; } return result; }
 
     static (double RttMs, int Samples, string Method) MeasureTcpRtt(List<CapturedPacket> packets, List<Flow> candidates)
     {
@@ -165,10 +161,10 @@ internal static class CrossFireRoomTransportProbeV3
                 targetIp = best.RemoteIp; targetPort = best.RemotePort; targetProtocol = best.Protocol;
                 if (type.GetField("connectionText", flags)?.GetValue(form) is Label label) label.Text = string.Join("\r\n", candidates.Take(10).Select(c => $"{c.Protocol,-3}  {c.RemoteIp}:{c.RemotePort,-5}  {(ControlPorts.Contains(c.RemotePort) ? "CONTROL" : "ROOM FLOW"),-10}  {c.In} IN / {c.Out} OUT"));
                 type.GetField("endpoint", flags)?.SetValue(form, best.RemoteIp); type.GetField("endpointPort", flags)?.SetValue(form, best.RemotePort); if (type.GetField("endpointBox", flags)?.GetValue(form) is TextBox box) box.Text = $"{best.RemoteIp}:{best.RemotePort}";
-                if (type.GetField("metrics", flags)?.GetValue(form) is Label m) { string latency = roomRtt.RttMs >= 0 && best.Protocol == "TCP" ? $"PASSIVE RTT {roomRtt.RttMs:0} ms" : "PASSIVE RTT — (no safe ACK correlation)"; m.Text = $"ENDPOINT   {best.RemoteIp}:{best.RemotePort}\r\nPROTOCOL   {best.Protocol}\r\nTRAFFIC    {best.In + best.Out} packets\r\nDIRECTION  {best.Out} out / {best.In} in\r\n{latency}\r\nSTATUS     {(actual ? "ACTUAL ROOM FLOW" : "CONTROL FLOW ONLY")}"; m.ForeColor = Green; }
-                if (type.GetField("quality", flags)?.GetValue(form) is Label q) { q.Text = actual ? (roomRtt.RttMs >= 0 ? $"● ACTUAL ROOM • {roomRtt.RttMs:0} ms PASSIVE RTT" : $"● ACTUAL ROOM • {best.Protocol} • PASSIVE RTT PENDING") : "● CONTROL ONLY"; q.ForeColor = actual ? Green : Muted; }
+                if (type.GetField("metrics", flags)?.GetValue(form) is Label m) { string latency = roomRtt.RttMs >= 0 && best.Protocol == "TCP" ? $"PASSIVE RTT {roomRtt.RttMs:0} ms" : "PASSIVE RTT — (no safe ACK correlation)"; m.Text = $"ENDPOINT   {best.RemoteIp}:{best.RemotePort}\r\nPROTOCOL   {best.Protocol}\r\nTRAFFIC    {best.In + best.Out} packets\r\nDIRECTION  {best.Out} out / {best.In} in\r\n{latency}\r\nSTATUS     {(actual ? "ACTUAL ROOM FLOW" : "CONTROL FLOW ONLY")}"; }
+                if (type.GetField("quality", flags)?.GetValue(form) is Label q) { q.Text = actual ? (roomRtt.RttMs >= 0 ? $"● ACTUAL ROOM • {roomRtt.RttMs:0} ms PASSIVE RTT" : $"● ACTUAL ROOM • {best.Protocol} • PASSIVE RTT PENDING") : "● CONTROL ONLY"; }
                 Log(form, $"[CROSSFIRE] V3 found {candidates.Count} bidirectional public flow(s)."); Log(form, $"[CROSSFIRE] V3 selected {best.RemoteIp}:{best.RemotePort} {best.Protocol} • {best.Out} out / {best.In} in.");
-                if (actual && roomRtt.RttMs >= 0) Log(form, $"[CROSSFIRE] PASSIVE ROOM RTT = {roomRtt.RttMs:0.0} ms from {roomRtt.Samples} {roomRtt.Method} sample(s). No synthetic game packets were sent."); else if (actual) Log(form, "[CROSSFIRE] Room traffic is confirmed, but this capture had no safe passive RTT correlation. UDP probe results are intentionally not used as game latency."); else Log(form, "[CROSSFIRE] Only control transports were observed; no separate room flow was proven in this capture.");
+                if (actual && roomRtt.RttMs >= 0) Log(form, $"[CROSSFIRE] PASSIVE ROOM RTT = {roomRtt.RttMs:0.0} ms from {roomRtt.Samples} {roomRtt.Method} sample(s). No synthetic game packets were sent."); else if (actual) Log(form, "[CROSSFIRE] Room traffic is confirmed, but this capture had no safe passive RTT correlation. UDP probe results are intentionally not used as game latency.");
             }
             catch (Exception ex) { Log(form, "[CROSSFIRE] V3 publish error: " + ex.Message); }
         }));
