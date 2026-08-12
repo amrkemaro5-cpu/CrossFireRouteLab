@@ -17,9 +17,10 @@ internal static class Program
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
 
-            // v9 uses a standalone dashboard. It does not install the old
-            // CrossFire window guard and does not alter fullscreen/game focus.
-            Application.Run(new GameRouteLabV9Form());
+            // v10 is a clean dashboard. It deliberately does not install any
+            // CrossFire window guard or call Win32 window-state APIs. Alt+Tab,
+            // fullscreen changes and game focus are left entirely to Windows.
+            Application.Run(new GameRouteLabV10Form());
         }
         catch (Exception ex)
         {
