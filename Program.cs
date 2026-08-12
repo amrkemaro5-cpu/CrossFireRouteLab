@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Windows.Forms;
 
 namespace CrossFireRouteLab;
@@ -18,9 +17,9 @@ internal static class Program
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
 
-            var dashboard = new DashboardForm();
-            using var crossFireWindowGuard = new CrossFireWindowGuard(dashboard);
-            Application.Run(dashboard);
+            // v8 deliberately does NOT attach CrossFireWindowGuard. The old guard
+            // could interfere with Alt+Tab/fullscreen CrossFire window behavior.
+            Application.Run(new GameRouteLabV8Form());
         }
         catch (Exception ex)
         {
@@ -53,9 +52,10 @@ internal static class CrashReporter
         try
         {
             MessageBox.Show(
-                $"Game Route Lab could not start correctly.\r\n\r\n" +
-                $"A diagnostic log was saved to:\r\n{Path.Combine(Root, "startup-error.log")}\r\n\r\n" +
-                $"Error: {ex.Message}",
+                "Game Route Lab could not start correctly.\r\n\r\n" +
+                "A diagnostic log was saved to:\r\n" +
+                Path.Combine(Root, "startup-error.log") + "\r\n\r\n" +
+                "Error: " + ex.Message,
                 "Game Route Lab — Startup Error",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
