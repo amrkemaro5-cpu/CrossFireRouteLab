@@ -19,16 +19,16 @@ internal static class Program
             };
 
             // v10 remains the active dashboard and its design/layout are unchanged.
-            // The CrossFire-specific window guard prevents fullscreen/Alt+Tab
-            // transitions from minimizing or hiding the dashboard without stealing
-            // focus from the game.
+            // The guard prevents CrossFire fullscreen/Alt+Tab transitions from
+            // minimizing or hiding the dashboard without stealing game focus.
             var dashboard = new GameRouteLabV10Form();
             BindTelemetryText(dashboard);
             IspTrackerPatch.Apply(dashboard);
             TelemetryVisibilityPatch.Apply(dashboard);
             AutoOptimizationPatch.Apply(dashboard);
+            EndpointMeasurementPatch.Apply(dashboard);
 
-            using var crossFireGuard = new CrossFireWindowGuard(dashboard);
+            using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
             Application.Run(dashboard);
         }
         catch (Exception ex)
