@@ -1,13 +1,14 @@
 namespace CrossFireRouteLab;
 
 /// <summary>
-/// Final runtime visual layer. Keeps the dashboard centered at different window
-/// sizes and makes placeholder telemetry visibly animate until real measurements
-/// replace it. No networking or Windows settings are changed.
+/// Lightweight runtime visual layer. Layout is calculated only when the window
+/// actually changes size; the visual timer only updates paint-only animation.
+/// This avoids forcing TableLayoutPanel layout/reflow dozens of times per second.
 /// </summary>
 public sealed partial class DashboardForm
 {
-    readonly System.Windows.Forms.Timer runtimeVisualTimer = new() { Interval = 50 };
+    // This timer is deliberately slow: telemetry decoration is not a frame loop.
+    readonly System.Windows.Forms.Timer runtimeVisualTimer = new() { Interval = 180 };
     bool runtimeVisualsReady;
 
     void InstallRuntimeFixes()
@@ -23,6 +24,7 @@ public sealed partial class DashboardForm
             runtimeVisualTimer.Dispose();
         };
 
+        // Layout once after the controls have their real client sizes.
         ArrangeRuntimeLayout();
         RuntimeVisualTick();
     }
@@ -32,10 +34,10 @@ public sealed partial class DashboardForm
         if (IsDisposed || !IsHandleCreated) return;
         try
         {
-            ArrangeRuntimeLayout();
-
-            // The graph is always alive. Once a real endpoint is selected,
-            // SampleLivePing replaces this animated placeholder with measurements.
+            // IMPORTANT: do not call ArrangeRuntimeLayout() here.
+            // Layout is expensive and runs on the WinForms UI thread.
+            // The resize handlers in DashboardPolish.cs already keep the layout
+            // correct when the user actually resizes the window.
             if (string.IsNullOrWhiteSpace(liveTarget))
             {
                 var values = Enumerable.Range(0, 28)
@@ -43,13 +45,13 @@ public sealed partial class DashboardForm
                     .ToList();
                 graph.Values = values;
             }
+
             graph.Phase = phase;
             graph.Invalidate();
 
             foreach (var overlay in telemetryOverlays)
             {
                 overlay.Phase = phase;
-                // Keep the animation visible without covering the telemetry text.
                 overlay.Height = 22;
                 overlay.Invalidate();
             }
@@ -58,7 +60,8 @@ public sealed partial class DashboardForm
         }
         catch (Exception ex)
         {
-            Log("[VISUAL LOOP] " + ex.Message);
+            // Never let a decorative animation fault interrupt the UI loop.
+            System.Diagnostics.Debug.WriteLine("[VISUAL LOOP] " + ex.Message);
         }
     }
 
@@ -70,23 +73,31 @@ public sealed partial class DashboardForm
         if (body.Controls[1] is not TableLayoutPanel center || center.Controls.Count < 4) return;
 
         var available = Math.Max(1, center.ClientSize.Height);
-        // Percent rows prevent the old fixed 205/205/210 layout from pushing the
-        // console and Best Endpoint metrics outside the visible center column.
-        center.RowStyles[0].SizeType = SizeType.Percent;
-        center.RowStyles[1].SizeType = SizeType.Percent;
-        center.RowStyles[2].SizeType = SizeType.Percent;
-        center.RowStyles[3].SizeType = SizeType.Percent;
-        center.RowStyles[0].Height = available < 560 ? 24 : 25;
-        center.RowStyles[1].Height = 24;
-        center.RowStyles[2].Height = 27;
-        center.RowStyles[3].Height = available < 560 ? 25 : 24;
+        center.SuspendLayout();
+        body.SuspendLayout();
+        try
+        {
+            center.RowStyles[0].SizeType = SizeType.Percent;
+            center.RowStyles[1].SizeType = SizeType.Percent;
+            center.RowStyles[2].SizeType = SizeType.Percent;
+            center.RowStyles[3].SizeType = SizeType.Percent;
+            center.RowStyles[0].Height = available < 560 ? 24 : 25;
+            center.RowStyles[1].Height = 24;
+            center.RowStyles[2].Height = 27;
+            center.RowStyles[3].Height = available < 560 ? 25 : 24;
 
-        body.ColumnStyles[0].Width = body.ClientSize.Width < 1200 ? 236 : 262;
-        body.ColumnStyles[2].Width = body.ClientSize.Width < 1200 ? 292 : 318;
+            body.ColumnStyles[0].Width = body.ClientSize.Width < 1200 ? 236 : 262;
+            body.ColumnStyles[2].Width = body.ClientSize.Width < 1200 ? 292 : 318;
 
-        ArrangeBestRuntime(center.Controls[2]);
-        ArrangeSummaryRuntime(center.Controls[1]);
-        ArrangeHeroRuntime(center.Controls[0]);
+            ArrangeBestRuntime(center.Controls[2]);
+            ArrangeSummaryRuntime(center.Controls[1]);
+            ArrangeHeroRuntime(center.Controls[0]);
+        }
+        finally
+        {
+            body.ResumeLayout(true);
+            center.ResumeLayout(true);
+        }
     }
 
     void ArrangeBestRuntime(Control control)
@@ -106,9 +117,6 @@ public sealed partial class DashboardForm
         quality.TextAlign = ContentAlignment.TopRight;
         graph.SetBounds(graphX, 48, graphWidth, Math.Max(92, h - 58));
         graph.BackColor = Surface;
-        best.BringToFront();
-        metrics.BringToFront();
-        quality.BringToFront();
     }
 
     void ArrangeSummaryRuntime(Control control)
