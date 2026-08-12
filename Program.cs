@@ -34,11 +34,10 @@ internal static class Program
             RouteOptimizerPatch.Apply(dashboard);
             CrossFireRoomRouteOptimizerV2.Apply(dashboard);
             FinalAiRoutePatch.Apply(dashboard);
-            // Final policy layer: CrossFire is TCP-only for this analyzer.
-            // It disables the legacy UDP-capable timers and publishes only live
-            // TCP endpoints belonging to the CrossFire process.
-            CrossFireTcpOnlyFinalPatch.Apply(dashboard);
 
+            // Do not apply the old TCP-only override here. CrossFire room traffic
+            // can be UDP on a dynamic room port; forcing TCP caused 10009/control
+            // sockets to be mislabeled as the room and prevented route optimization.
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
             Application.Run(dashboard);
         }
