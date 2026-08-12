@@ -7,13 +7,11 @@ using System.Reflection;
 namespace CrossFireRouteLab;
 
 /// <summary>
-/// Transport-aware endpoint measurement.
-///
-/// For CrossFire, only room/game sockets are eligible for "best endpoint"
-/// selection. Launcher/CDN HTTPS sockets (especially TCP/443) are excluded
-/// whenever a room socket is visible. Measurements are TCP connect RTTs to
-/// the actual exposed room endpoint; the UI does not call those values the
-/// game's scoreboard ping.
+/// Measures the active transport endpoints discovered for a game.
+/// For CrossFire, 10009/13008 are master/control sockets, not automatically the
+/// room server. If a different active room TCP endpoint is visible, it is the
+/// measurement target. Historical "SEEN ... AGO" sockets remain in the UI but
+/// are not used as a live target.
 /// </summary>
 internal static class EndpointMeasurementPatch
 {
@@ -22,7 +20,7 @@ internal static class EndpointMeasurementPatch
     static string lastTarget = "";
     static double lastScore = -1;
 
-    static readonly HashSet<int> CrossFirePreferredPorts = new() { 10009, 13008 };
+    static readonly HashSet<int> CrossFireMasterPorts = new() { 10009, 13008 };
     static readonly HashSet<int> WebOrControlPorts = new() { 80, 443, 8080, 8443 };
 
     public static void Apply(Form form)
@@ -31,10 +29,10 @@ internal static class EndpointMeasurementPatch
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         if (form.GetType().GetField("pingTimer", flags)?.GetValue(form) is System.Windows.Forms.Timer oldTimer)
             oldTimer.Stop();
-
-        timer = new System.Threading.Timer(_ => Tick(form), null, 2500, 3500);
+        timer?.Dispose();
+        timer = new System.Threading.Timer(_ => Tick(form), null, 2200, 2200);
         form.FormClosed += (_, _) => { try { timer?.Dispose(); } catch { } timer = null; };
-        Log(form, "[AI] Endpoint engine enabled: ranking the game's exposed transport connections; CrossFire CDN/HTTPS sockets are excluded from room ranking.");
+        Log(form, "[AI] Endpoint engine fixed: CrossFire room TCP is measured separately from 10009/13008 master/control sockets.");
     }
 
     static void Tick(Form form)
@@ -42,13 +40,7 @@ internal static class EndpointMeasurementPatch
         if (running || form.IsDisposed || !form.IsHandleCreated) return;
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var type = form.GetType();
-
-        // AutoAnalyze starts the legacy 1-second timer after its first probe.
-        // Keep that timer stopped so it cannot replace the transport measurement
-        // with an unrelated ICMP result a moment later.
-        if (type.GetField("pingTimer", flags)?.GetValue(form) is System.Windows.Forms.Timer oldTimer)
-            oldTimer.Stop();
-
+        if (type.GetField("pingTimer", flags)?.GetValue(form) is System.Windows.Forms.Timer oldTimer) oldTimer.Stop();
         if (type.GetField("gamePid", flags)?.GetValue(form) is not int pid || pid <= 0) return;
         if (type.GetField("gameName", flags)?.GetValue(form) is not string gameName || string.IsNullOrWhiteSpace(gameName)) return;
         if (type.GetField("connections", flags)?.GetValue(form) is not System.Collections.IEnumerable raw) return;
@@ -60,15 +52,20 @@ internal static class EndpointMeasurementPatch
             var t = item.GetType();
             var ip = t.GetProperty("Ip")?.GetValue(item)?.ToString();
             var protocol = t.GetProperty("Protocol")?.GetValue(item)?.ToString() ?? "";
+            var state = t.GetProperty("State")?.GetValue(item)?.ToString() ?? "";
             var portObj = t.GetProperty("Port")?.GetValue(item);
             if (!int.TryParse(portObj?.ToString(), out var port) || string.IsNullOrWhiteSpace(ip)) continue;
             if (!IsPublic(ip) || port <= 0 || port > 65535) continue;
-            candidates.Add(new Candidate(ip, port, protocol));
+            if (!protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)) continue;
+            if (WebOrControlPorts.Contains(port)) continue;
+            // Discovery deliberately retains short-lived sockets, but the
+            // endpoint engine must only measure sockets that are active now.
+            if (!state.Contains("ESTABLISHED", StringComparison.OrdinalIgnoreCase)) continue;
+            candidates.Add(new Candidate(ip, port, protocol, state));
         }
 
         candidates = FilterCandidates(gameName, candidates);
         if (candidates.Count == 0) return;
-
         running = true;
         _ = Task.Run(() => RankAndPublish(form, gameName, candidates));
     }
@@ -76,31 +73,27 @@ internal static class EndpointMeasurementPatch
     static List<Candidate> FilterCandidates(string gameName, List<Candidate> candidates)
     {
         if (!gameName.Contains("crossfire", StringComparison.OrdinalIgnoreCase)) return candidates;
-
-        var tcp = candidates.Where(c => c.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)).ToList();
-        var preferred = tcp.Where(c => CrossFirePreferredPorts.Contains(c.Port)).ToList();
-        if (preferred.Count > 0) return preferred;
-
-        var nonWeb = tcp.Where(c => !WebOrControlPorts.Contains(c.Port)).ToList();
-        if (nonWeb.Count > 0) return nonWeb;
-
-        // If the only visible CrossFire sockets are HTTPS/control sockets, keep
-        // them visible to diagnostics but do not pretend they are room ping.
-        return new List<Candidate>();
+        var room = candidates.Where(c => !CrossFireMasterPorts.Contains(c.Port)).ToList();
+        if (room.Count > 0)
+        {
+            LogSafe(gameName, room.Count);
+            return room;
+        }
+        // Only fall back to the master/control socket when no other active
+        // CrossFire TCP endpoint is visible. This makes the fallback explicit.
+        return candidates.Where(c => CrossFireMasterPorts.Contains(c.Port)).ToList();
     }
+
+    static void LogSafe(string gameName, int roomCount) { _ = roomCount; _ = gameName; }
 
     static async Task RankAndPublish(Form form, string gameName, List<Candidate> candidates)
     {
         try
         {
             var ranked = new List<Result>();
-            foreach (var c in candidates.Take(12))
+            foreach (var c in candidates.Take(16))
             {
-                // A CrossFire candidate is always TCP here. For other games the
-                // original ICMP-vs-TCP behavior is retained.
-                var samples = c.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)
-                    ? await TcpSamples(c.Ip, c.Port, 3)
-                    : await IcmpSamples(c.Ip, 3);
+                var samples = await TcpSamples(c.Ip, c.Port, 3).ConfigureAwait(false);
                 var good = samples.Where(x => x >= 0).OrderBy(x => x).ToList();
                 if (good.Count == 0) continue;
                 var median = good[good.Count / 2];
@@ -108,22 +101,17 @@ internal static class EndpointMeasurementPatch
                 var loss = 1.0 - good.Count / 3.0;
                 ranked.Add(new Result(c, median, average, loss));
             }
-
             if (ranked.Count == 0) return;
+
             var best = ranked.OrderBy(x => x.Median).ThenBy(x => x.Average).First();
-            var hasCurrent = ranked.Any(x => $"{x.C.Ip}:{x.C.Port}".Equals(lastTarget, StringComparison.OrdinalIgnoreCase));
-            if (hasCurrent)
+            if (ranked.Any(x => $"{x.C.Ip}:{x.C.Port}".Equals(lastTarget, StringComparison.OrdinalIgnoreCase)))
             {
                 var current = ranked.First(x => $"{x.C.Ip}:{x.C.Port}".Equals(lastTarget, StringComparison.OrdinalIgnoreCase));
                 if (current.Median <= best.Median + 2.0) best = current;
             }
-
             Publish(form, gameName, best, ranked);
         }
-        catch (Exception ex)
-        {
-            Log(form, "[AI] Endpoint engine stopped safely: " + ex.Message);
-        }
+        catch (Exception ex) { Log(form, "[AI] Endpoint engine stopped safely: " + ex.Message); }
         finally { running = false; }
     }
 
@@ -143,41 +131,41 @@ internal static class EndpointMeasurementPatch
                 if (type.GetField("endpointBox", flags)?.GetValue(form) is TextBox box)
                     box.Text = $"{best.C.Ip}:{best.C.Port}";
 
+                bool crossfire = gameName.Contains("crossfire", StringComparison.OrdinalIgnoreCase);
+                bool masterFallback = crossfire && CrossFireMasterPorts.Contains(best.C.Port);
                 if (type.GetField("metrics", flags)?.GetValue(form) is Label metrics)
                 {
-                    var isCrossFire = gameName.Contains("crossfire", StringComparison.OrdinalIgnoreCase);
                     metrics.Text = $"ENDPOINT   {best.C.Ip}:{best.C.Port}\r\n" +
-                                   $"PROTOCOL   {best.C.Protocol}\r\n" +
+                                   $"PROTOCOL   TCP\r\n" +
                                    $"LATENCY    {best.Median:0} ms\r\n" +
                                    $"LOSS       {(best.Loss * 100):0.#}%\r\n" +
                                    $"JITTER     —\r\n" +
                                    $"STABILITY  {Stability(best.Median, best.Loss)}\r\n\r\n" +
-                                   (isCrossFire
-                                       ? "* Room TCP connect RTT; not the scoreboard's game-ping value."
-                                       : (best.C.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)
-                                           ? "* TCP connect RTT is the transport probe."
-                                           : "* ICMP is supporting evidence only."));
+                                   (crossfire
+                                       ? (masterFallback
+                                           ? "* Fallback: no separate room TCP is visible; measuring CrossFire master/control."
+                                           : "* Active CrossFire room TCP transport; this is the routing measurement target.")
+                                       : "* TCP connect RTT is the transport probe.");
                 }
 
                 if (type.GetField("quality", flags)?.GetValue(form) is Label quality)
                 {
-                    quality.Text = $"● LIVE • {best.Median:0} ms • {ranked.Count} ROOM CANDIDATE(S)";
+                    quality.Text = masterFallback
+                        ? $"● FALLBACK MASTER • {best.Median:0} ms • {ranked.Count} CANDIDATE(S)"
+                        : $"● ROOM TCP • {best.Median:0} ms • {ranked.Count} CANDIDATE(S)";
                     quality.ForeColor = Color.FromArgb(40, 242, 122);
                 }
 
                 var graph = type.GetField("graph", flags)?.GetValue(form);
-                var valuesProperty = graph?.GetType().GetProperty("Values", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                valuesProperty?.SetValue(graph, new[] { best.Median });
+                graph?.GetType().GetProperty("Values", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.SetValue(graph, new[] { best.Median });
 
-                var changed = !string.Equals(lastTarget, $"{best.C.Ip}:{best.C.Port}", StringComparison.OrdinalIgnoreCase) || Math.Abs(lastScore - best.Median) >= 2;
-                lastTarget = $"{best.C.Ip}:{best.C.Port}";
-                lastScore = best.Median;
+                var target = $"{best.C.Ip}:{best.C.Port}";
+                var changed = !string.Equals(lastTarget, target, StringComparison.OrdinalIgnoreCase) || Math.Abs(lastScore - best.Median) >= 2;
+                lastTarget = target; lastScore = best.Median;
 
-                Log(form, $"[ENDPOINT AI] {gameName}: best exposed room connection = {best.C.Ip}:{best.C.Port} {best.C.Protocol} | TCP median {best.Median:0} ms | candidates {ranked.Count}.");
+                Log(form, $"[ENDPOINT AI] {gameName}: best active TCP = {target} | {best.Median:0} ms | candidates {ranked.Count} | {(masterFallback ? "MASTER FALLBACK" : "ROOM TRANSPORT") }.");
                 if (changed)
-                    Log(form, $"[ENDPOINT AI] Measurement target updated to {lastTarget}. This measures a room socket CrossFire is already using; it does not force CrossFire to switch servers.");
-                if (ranked.Count == 1)
-                    Log(form, "[ENDPOINT AI] Only one public room endpoint is exposed right now. A CDN/HTTPS socket is not counted as a second game server.");
+                    Log(form, $"[ENDPOINT AI] Measurement target updated to {target}. This is an endpoint CrossFire is actively using; no server switch is being forced.");
             }
             catch { }
         }));
@@ -193,41 +181,27 @@ internal static class EndpointMeasurementPatch
                 using var client = new TcpClient { NoDelay = true };
                 var sw = Stopwatch.StartNew();
                 var task = client.ConnectAsync(ip, port);
-                if (await Task.WhenAny(task, Task.Delay(1000)) == task && client.Connected)
+                if (await Task.WhenAny(task, Task.Delay(1000)).ConfigureAwait(false) == task && client.Connected)
                 {
                     sw.Stop(); list.Add(sw.Elapsed.TotalMilliseconds);
                 }
                 else list.Add(-1);
             }
             catch { list.Add(-1); }
-            await Task.Delay(60);
-        }
-        return list;
-    }
-
-    static async Task<List<double>> IcmpSamples(string ip, int count)
-    {
-        var list = new List<double>();
-        for (var i = 0; i < count; i++)
-        {
-            try
-            {
-                using var ping = new Ping();
-                var r = await ping.SendPingAsync(ip, 900);
-                list.Add(r.Status == IPStatus.Success ? r.RoundtripTime : -1);
-            }
-            catch { list.Add(-1); }
+            await Task.Delay(60).ConfigureAwait(false);
         }
         return list;
     }
 
     static bool IsPublic(string ip)
     {
-        if (!IPAddress.TryParse(ip, out var a)) return false;
-        if (IPAddress.IsLoopback(a)) return false;
-        var b = a.GetAddressBytes();
-        if (b.Length != 4) return !a.IsIPv6LinkLocal;
-        return !(b[0] == 10 || b[0] == 127 || (b[0] == 169 && b[1] == 254) || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168));
+        if (!IPAddress.TryParse(ip, out var a) || IPAddress.IsLoopback(a)) return false;
+        if (a.AddressFamily == AddressFamily.InterNetwork)
+        {
+            var b = a.GetAddressBytes();
+            return !(b[0] == 10 || b[0] == 127 || (b[0] == 169 && b[1] == 254) || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168) || (b[0] == 100 && b[1] >= 64 && b[1] <= 127));
+        }
+        return !a.IsIPv6LinkLocal && !a.IsIPv6SiteLocal;
     }
 
     static string Stability(double latency, double loss)
@@ -245,6 +219,6 @@ internal static class EndpointMeasurementPatch
         try { form.BeginInvoke((Action)(() => form.GetType().GetMethod("Log", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(form, new object[] { text }))); } catch { }
     }
 
-    readonly record struct Candidate(string Ip, int Port, string Protocol);
+    readonly record struct Candidate(string Ip, int Port, string Protocol, string State);
     readonly record struct Result(Candidate C, double Median, double Average, double Loss);
 }
