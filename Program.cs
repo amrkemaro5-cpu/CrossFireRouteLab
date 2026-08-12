@@ -27,6 +27,7 @@ internal static class Program
             CrossFireConnectionDiscoveryPatch.Apply(dashboard);
             CrossFireRoomTransportPatch.Apply(dashboard);
             CrossFirePacketRoomDiscoveryPatchV2.Apply(dashboard);
+            CrossFireRoomTransportProbeV3.Apply(dashboard);
             RouteOptimizerPatch.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
