@@ -32,6 +32,7 @@ internal static class Program
             CrossFireRoomLatencyUiPatch.Apply(dashboard);
             RouteOptimizerPatch.Apply(dashboard);
             CrossFireRoomRouteOptimizerV2.Apply(dashboard);
+            FinalAiRoutePatch.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
             Application.Run(dashboard);
