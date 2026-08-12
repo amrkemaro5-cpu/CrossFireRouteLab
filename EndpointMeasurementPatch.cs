@@ -7,11 +7,13 @@ using System.Reflection;
 namespace CrossFireRouteLab;
 
 /// <summary>
-/// Fixes the v10 measurement flaw: ICMP latency is not necessarily the latency
-/// CrossFire reports. For TCP endpoints already opened by the game, GRL measures
-/// TCP connect RTT and ranks every public candidate instead of taking the first
-/// netstat row. It changes only GRL's measurement target; it never rewrites the
-/// game's server selection or invents a route Windows does not have.
+/// Transport-aware endpoint measurement.
+///
+/// For CrossFire, only room/game sockets are eligible for "best endpoint"
+/// selection. Launcher/CDN HTTPS sockets (especially TCP/443) are excluded
+/// whenever a room socket is visible. Measurements are TCP connect RTTs to
+/// the actual exposed room endpoint; the UI does not call those values the
+/// game's scoreboard ping.
 /// </summary>
 internal static class EndpointMeasurementPatch
 {
@@ -20,6 +22,9 @@ internal static class EndpointMeasurementPatch
     static string lastTarget = "";
     static double lastScore = -1;
 
+    static readonly HashSet<int> CrossFirePreferredPorts = new() { 10009, 13008 };
+    static readonly HashSet<int> WebOrControlPorts = new() { 80, 443, 8080, 8443 };
+
     public static void Apply(Form form)
     {
         if (form.IsDisposed) return;
@@ -27,9 +32,9 @@ internal static class EndpointMeasurementPatch
         if (form.GetType().GetField("pingTimer", flags)?.GetValue(form) is System.Windows.Forms.Timer oldTimer)
             oldTimer.Stop();
 
-        timer = new System.Threading.Timer(_ => Tick(form), null, 3500, 3500);
+        timer = new System.Threading.Timer(_ => Tick(form), null, 2500, 3500);
         form.FormClosed += (_, _) => { try { timer?.Dispose(); } catch { } timer = null; };
-        Log(form, "[AI] Endpoint engine enabled: ranking the game's actual public connections instead of trusting ICMP alone.");
+        Log(form, "[AI] Endpoint engine enabled: ranking the game's exposed transport connections; CrossFire CDN/HTTPS sockets are excluded from room ranking.");
     }
 
     static void Tick(Form form)
@@ -37,6 +42,13 @@ internal static class EndpointMeasurementPatch
         if (running || form.IsDisposed || !form.IsHandleCreated) return;
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var type = form.GetType();
+
+        // AutoAnalyze starts the legacy 1-second timer after its first probe.
+        // Keep that timer stopped so it cannot replace the transport measurement
+        // with an unrelated ICMP result a moment later.
+        if (type.GetField("pingTimer", flags)?.GetValue(form) is System.Windows.Forms.Timer oldTimer)
+            oldTimer.Stop();
+
         if (type.GetField("gamePid", flags)?.GetValue(form) is not int pid || pid <= 0) return;
         if (type.GetField("gameName", flags)?.GetValue(form) is not string gameName || string.IsNullOrWhiteSpace(gameName)) return;
         if (type.GetField("connections", flags)?.GetValue(form) is not System.Collections.IEnumerable raw) return;
@@ -53,10 +65,28 @@ internal static class EndpointMeasurementPatch
             if (!IsPublic(ip) || port <= 0 || port > 65535) continue;
             candidates.Add(new Candidate(ip, port, protocol));
         }
+
+        candidates = FilterCandidates(gameName, candidates);
         if (candidates.Count == 0) return;
 
         running = true;
         _ = Task.Run(() => RankAndPublish(form, gameName, candidates));
+    }
+
+    static List<Candidate> FilterCandidates(string gameName, List<Candidate> candidates)
+    {
+        if (!gameName.Contains("crossfire", StringComparison.OrdinalIgnoreCase)) return candidates;
+
+        var tcp = candidates.Where(c => c.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)).ToList();
+        var preferred = tcp.Where(c => CrossFirePreferredPorts.Contains(c.Port)).ToList();
+        if (preferred.Count > 0) return preferred;
+
+        var nonWeb = tcp.Where(c => !WebOrControlPorts.Contains(c.Port)).ToList();
+        if (nonWeb.Count > 0) return nonWeb;
+
+        // If the only visible CrossFire sockets are HTTPS/control sockets, keep
+        // them visible to diagnostics but do not pretend they are room ping.
+        return new List<Candidate>();
     }
 
     static async Task RankAndPublish(Form form, string gameName, List<Candidate> candidates)
@@ -66,6 +96,8 @@ internal static class EndpointMeasurementPatch
             var ranked = new List<Result>();
             foreach (var c in candidates.Take(12))
             {
+                // A CrossFire candidate is always TCP here. For other games the
+                // original ICMP-vs-TCP behavior is retained.
                 var samples = c.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)
                     ? await TcpSamples(c.Ip, c.Port, 3)
                     : await IcmpSamples(c.Ip, 3);
@@ -113,20 +145,23 @@ internal static class EndpointMeasurementPatch
 
                 if (type.GetField("metrics", flags)?.GetValue(form) is Label metrics)
                 {
+                    var isCrossFire = gameName.Contains("crossfire", StringComparison.OrdinalIgnoreCase);
                     metrics.Text = $"ENDPOINT   {best.C.Ip}:{best.C.Port}\r\n" +
                                    $"PROTOCOL   {best.C.Protocol}\r\n" +
                                    $"LATENCY    {best.Median:0} ms\r\n" +
                                    $"LOSS       {(best.Loss * 100):0.#}%\r\n" +
                                    $"JITTER     —\r\n" +
                                    $"STABILITY  {Stability(best.Median, best.Loss)}\r\n\r\n" +
-                                   (best.C.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)
-                                       ? "* TCP connect RTT is the transport probe."
-                                       : "* UDP endpoint: ICMP is supporting evidence only.");
+                                   (isCrossFire
+                                       ? "* Room TCP connect RTT; not the scoreboard's game-ping value."
+                                       : (best.C.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)
+                                           ? "* TCP connect RTT is the transport probe."
+                                           : "* ICMP is supporting evidence only."));
                 }
 
                 if (type.GetField("quality", flags)?.GetValue(form) is Label quality)
                 {
-                    quality.Text = $"● LIVE • {best.Median:0} ms • {ranked.Count} CANDIDATE(S)";
+                    quality.Text = $"● LIVE • {best.Median:0} ms • {ranked.Count} ROOM CANDIDATE(S)";
                     quality.ForeColor = Color.FromArgb(40, 242, 122);
                 }
 
@@ -138,11 +173,11 @@ internal static class EndpointMeasurementPatch
                 lastTarget = $"{best.C.Ip}:{best.C.Port}";
                 lastScore = best.Median;
 
-                Log(form, $"[ENDPOINT AI] {gameName}: best exposed game connection = {best.C.Ip}:{best.C.Port} {best.C.Protocol} | median {best.Median:0} ms | candidates {ranked.Count}.");
+                Log(form, $"[ENDPOINT AI] {gameName}: best exposed room connection = {best.C.Ip}:{best.C.Port} {best.C.Protocol} | TCP median {best.Median:0} ms | candidates {ranked.Count}.");
                 if (changed)
-                    Log(form, $"[ENDPOINT AI] Measurement target updated to {lastTarget}. This does not force CrossFire to switch servers; it selects the best endpoint that CrossFire is already connected to.");
+                    Log(form, $"[ENDPOINT AI] Measurement target updated to {lastTarget}. This measures a room socket CrossFire is already using; it does not force CrossFire to switch servers.");
                 if (ranked.Count == 1)
-                    Log(form, "[ENDPOINT AI] Only one public game endpoint is exposed. There is no second server endpoint for GRL to switch to locally.");
+                    Log(form, "[ENDPOINT AI] Only one public room endpoint is exposed right now. A CDN/HTTPS socket is not counted as a second game server.");
             }
             catch { }
         }));
