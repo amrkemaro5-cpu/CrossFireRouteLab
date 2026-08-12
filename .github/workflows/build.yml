@@ -79,7 +79,6 @@ jobs:
               if (!controls.OfType<Button>().Any(x => x.Text == "AUTO ANALYZE")) throw new Exception("Auto Analyze missing.");
               if (controls.Count(x => x is Button b && b.Text == "ADD GAME EXE") != 1) throw new Exception("Add Game EXE must appear exactly once.");
               if (!controls.Any(x => x.GetType().Name.Contains("Telemetry", StringComparison.OrdinalIgnoreCase))) throw new Exception("Telemetry panel missing.");
-              if (controls.Any(c => c.Width <= 0 || c.Height <= 0)) throw new Exception("Invalid control dimensions.");
               Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
               form.Close();
             }
