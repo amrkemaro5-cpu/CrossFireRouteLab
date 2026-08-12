@@ -4,17 +4,19 @@ namespace CrossFireRouteLab;
 // dashboard synchronized with the game process and the last measured endpoint.
 public sealed partial class DashboardForm
 {
-    readonly System.Windows.Forms.Timer liveDiscoveryTimer = new() { Interval = 4000 };
+    readonly System.Windows.Forms.Timer liveDiscoveryTimer = new() { Interval = 2500 };
     bool liveDiscoveryBusy;
 
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
         EnsurePolishLoaded();
+        InstallRuntimeFixes();
         SyncEndpointFromMemory();
         liveDiscoveryTimer.Tick -= LiveDiscoveryTimer_Tick;
         liveDiscoveryTimer.Tick += LiveDiscoveryTimer_Tick;
         liveDiscoveryTimer.Start();
+        _ = LiveDiscoveryOnceAsync();
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -26,6 +28,11 @@ public sealed partial class DashboardForm
 
     async void LiveDiscoveryTimer_Tick(object? sender, EventArgs e)
     {
+        await LiveDiscoveryOnceAsync();
+    }
+
+    async Task LiveDiscoveryOnceAsync()
+    {
         if (liveDiscoveryBusy || busy || IsDisposed || !IsHandleCreated) return;
         liveDiscoveryBusy = true;
         try
@@ -35,15 +42,27 @@ public sealed partial class DashboardForm
             {
                 current = candidates[0];
                 gameName.Text = current.DisplayName;
-                gameMeta.Text = $"{current.Observations} saved analyses\r\nPath: {current.ExecutablePath}\r\nBest: {(string.IsNullOrWhiteSpace(current.LastBestEndpoint) ? "—" : current.LastBestEndpoint)}";
+                gameMeta.Text = $"{current.Observations} saved analyses\r\nRunning: YES\r\nPath: {current.ExecutablePath}\r\nBest: {(string.IsNullOrWhiteSpace(current.LastBestEndpoint) ? "—" : current.LastBestEndpoint)}";
                 Log($"LIVE SCAN: detected {current.DisplayName} ({current.ProcessName}).");
+                await AutoPopulateEndpointAsync();
             }
             else if (current != null)
             {
                 var refreshed = candidates.FirstOrDefault(x =>
                     x.ProcessName.Equals(current.ProcessName, StringComparison.OrdinalIgnoreCase) &&
                     x.ExecutablePath.Equals(current.ExecutablePath, StringComparison.OrdinalIgnoreCase));
-                if (refreshed != null) current = refreshed;
+                if (refreshed != null)
+                {
+                    current = refreshed;
+                    UpdateDetectedGameVisual(current);
+                    await AutoPopulateEndpointAsync();
+                }
+            }
+            else if (candidates.Count > 0)
+            {
+                current = candidates[0];
+                UpdateDetectedGameVisual(current);
+                await AutoPopulateEndpointAsync();
             }
             SyncEndpointFromMemory();
         }
