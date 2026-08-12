@@ -109,10 +109,15 @@ internal static class RouteOptimizerPatch
 
             if (candidates.Count <= 1)
             {
-                var only = candidates.Count == 1 ? candidates[0] : null;
-                Log(form, only == null
-                    ? "[ROUTE AI] No physical alternate path exists on this PC. WE's current route is the only route GRL can safely use."
-                    : $"[ROUTE AI] Only one physical path is available ({only.Alias} → {only.Gateway}). A PC-side route change cannot manufacture a shorter WE/Internet path.");
+                if (candidates.Count == 0)
+                {
+                    Log(form, "[ROUTE AI] No physical alternate path exists on this PC. WE's current route is the only route GRL can safely use.");
+                }
+                else
+                {
+                    var only = candidates[0];
+                    Log(form, $"[ROUTE AI] Only one physical path is available ({only.Alias} → {only.Gateway}). A PC-side route change cannot manufacture a shorter WE/Internet path.");
+                }
                 return;
             }
 
