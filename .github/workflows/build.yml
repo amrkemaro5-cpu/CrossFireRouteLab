@@ -51,7 +51,6 @@ jobs:
           if (-not $src.Contains($old)) { throw 'Expected V3 TCP-first selection bug was not found; refusing to build an unpatched package.' }
           $src = $src.Replace($old, $new)
 
-          # Port 10009 is not automatically CONTROL anymore. Sustained bidirectional TCP traffic can be a real room flow; tiny flows remain control.
           $oldRoom = 'var room = candidates.Where(x => !ControlPorts.Contains(x.RemotePort)).ToList();'
           $newRoom = 'var room = candidates.Where(x => !IsControlFlow(x)).ToList();'
           if (-not $src.Contains($oldRoom)) { throw 'Expected room-filter expression was not found.' }
@@ -68,7 +67,15 @@ jobs:
           $src = $src.Replace($oldLabel, $newLabel)
 
           $marker = '    static void Publish(GameRouteLabV10Form form, List<Flow> candidates, (double RttMs, int Samples, string Method) roomRtt)'
-          $method = "    static bool IsControlFlow(Flow f) {`r`n        if (!ControlPorts.Contains(f.RemotePort)) return false;`r`n        if (f.Protocol.Equals(\"TCP\", StringComparison.OrdinalIgnoreCase) && f.In > 0 && f.Out > 0 && (f.In + f.Out) >= 20) return false;`r`n        return true;`r`n    }`r`n`r`n"
+          $method = @'
+          static bool IsControlFlow(Flow f)
+          {
+              if (!ControlPorts.Contains(f.RemotePort)) return false;
+              if (f.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase) && f.In > 0 && f.Out > 0 && (f.In + f.Out) >= 20) return false;
+              return true;
+          }
+
+          '@
           if (-not $src.Contains($marker)) { throw 'Publish marker not found; refusing to build.' }
           $src = $src.Replace($marker, $method + $marker)
 
