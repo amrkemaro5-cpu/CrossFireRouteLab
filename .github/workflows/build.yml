@@ -61,11 +61,6 @@ jobs:
           if (-not $src.Contains($oldScore)) { throw 'Expected transport score expression was not found.' }
           $src = $src.Replace($oldScore, $newScore)
 
-          $oldLabel = 'ControlPorts.Contains(c.RemotePort) ? "CONTROL" : "ROOM"'
-          $newLabel = 'IsControlFlow(c) ? "CONTROL" : "ROOM"'
-          if (-not $src.Contains($oldLabel)) { throw 'Expected endpoint label expression was not found.' }
-          $src = $src.Replace($oldLabel, $newLabel)
-
           $marker = '    static void Publish(GameRouteLabV10Form form, List<Flow> candidates, (double RttMs, int Samples, string Method) roomRtt)'
           $method = @'
           static bool IsControlFlow(Flow f)
@@ -80,7 +75,7 @@ jobs:
           $src = $src.Replace($marker, $method + $marker)
 
           Set-Content $path $src -Encoding UTF8
-          Write-Host 'Final room decision fixed: sustained bidirectional TCP/10009 can be a room endpoint; small control flows remain excluded; UDP no longer receives an arbitrary protocol bonus.'
+          Write-Host 'Final room decision fixed: sustained bidirectional TCP/10009 can be a room endpoint; tiny control flows remain excluded; UDP and TCP now receive equal protocol weight.'
 
       - name: Verify CrossFire room selection patch
         shell: pwsh
