@@ -28,12 +28,10 @@ public static class GameProfileStore
     static readonly string ProfilesFile = Path.Combine(Root, "profiles.json");
     static readonly object Sync = new();
 
-    // Deliberately broad enough to keep the analyzer focused on games, while preventing
-    // browsers, launchers, chat clients and the ChatGPT desktop app from becoming memory entries.
     static readonly HashSet<string> BlockedProcesses = new(StringComparer.OrdinalIgnoreCase)
     {
         "chatgpt", "chrome", "msedge", "firefox", "opera", "brave", "vivaldi",
-        "discord", "slack", "teams", "outlook", "onedrive", "dropbox",
+        "discord", "slack", "teams", "outlook", "onedrive", "dropbox", "whatsapp", "whatsapp.root", "nte",
         "steam", "steamwebhelper", "epicgameslauncher", "epicwebhelper",
         "updater", "update", "searchhost", "searchindexer", "runtimebroker",
         "explorer", "dwm", "svchost", "lsass", "services", "wininit",
@@ -44,7 +42,8 @@ public static class GameProfileStore
     {
         var name = Path.GetFileNameWithoutExtension(processName ?? "");
         return string.IsNullOrWhiteSpace(name) || BlockedProcesses.Contains(name) ||
-               name.Contains("chatgpt", StringComparison.OrdinalIgnoreCase);
+               name.Contains("chatgpt", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("whatsapp", StringComparison.OrdinalIgnoreCase);
     }
 
     public static List<GameProfile> Load()
@@ -63,7 +62,6 @@ public static class GameProfileStore
     public static GameProfile Touch(string processName, string exePath)
     {
         if (IsBlocked(processName)) throw new InvalidOperationException("Blocked non-game process.");
-
         lock (Sync)
         {
             Directory.CreateDirectory(Root);
@@ -72,14 +70,7 @@ public static class GameProfileStore
             var p = profiles.FirstOrDefault(x => x.Key == key);
             if (p == null)
             {
-                p = new GameProfile
-                {
-                    Key = key,
-                    ProcessName = processName,
-                    ExecutablePath = exePath,
-                    DisplayName = PrettyName(processName, exePath),
-                    FirstSeenUtc = DateTime.UtcNow
-                };
+                p = new GameProfile { Key = key, ProcessName = processName, ExecutablePath = exePath, DisplayName = PrettyName(processName, exePath), FirstSeenUtc = DateTime.UtcNow };
                 profiles.Add(p);
             }
             p.ProcessName = processName;
@@ -126,14 +117,11 @@ public static class GameProfileStore
             if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
             {
                 var v = FileVersionInfo.GetVersionInfo(exePath);
-                if (!string.IsNullOrWhiteSpace(v.ProductName) && !v.ProductName.Equals("Microsoft Windows", StringComparison.OrdinalIgnoreCase))
-                    return v.ProductName.Trim();
-                if (!string.IsNullOrWhiteSpace(v.FileDescription) && !v.FileDescription.Equals(processName, StringComparison.OrdinalIgnoreCase))
-                    return v.FileDescription.Trim();
+                if (!string.IsNullOrWhiteSpace(v.ProductName) && !v.ProductName.Equals("Microsoft Windows", StringComparison.OrdinalIgnoreCase)) return v.ProductName.Trim();
+                if (!string.IsNullOrWhiteSpace(v.FileDescription) && !v.FileDescription.Equals(processName, StringComparison.OrdinalIgnoreCase)) return v.FileDescription.Trim();
             }
         }
         catch { }
-
         var s = Path.GetFileNameWithoutExtension(processName) ?? processName;
         return string.IsNullOrWhiteSpace(s) ? processName : char.ToUpperInvariant(s[0]) + s[1..];
     }
@@ -147,15 +135,11 @@ public static class GameProfileStore
             var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(p.Key))).Substring(0, 16);
             var path = Path.Combine(dir, hash + ".png");
             if (File.Exists(path)) return path;
-
-            using var icon = !string.IsNullOrWhiteSpace(p.ExecutablePath) && File.Exists(p.ExecutablePath)
-                ? Icon.ExtractAssociatedIcon(p.ExecutablePath)
-                : null;
+            using var icon = !string.IsNullOrWhiteSpace(p.ExecutablePath) && File.Exists(p.ExecutablePath) ? Icon.ExtractAssociatedIcon(p.ExecutablePath) : null;
             using var bmp = new Bitmap(96, 96, PixelFormat.Format32bppArgb);
             using var g = Graphics.FromImage(bmp);
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.FromArgb(5, 10, 20));
-
             if (icon != null)
             {
                 using var ib = icon.ToBitmap();
