@@ -18,13 +18,17 @@ internal static class Program
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
 
-            // v10 is the active dashboard. It deliberately does not install a
-            // CrossFire window guard and never changes WindowState, activation,
-            // TopMost, focus or fullscreen behavior.
+            // v10 remains the active dashboard and its design/layout are unchanged.
+            // The only CrossFire-specific behavior is the lightweight window guard:
+            // it prevents CrossFire fullscreen/Alt+Tab transitions from minimizing
+            // or hiding the dashboard, without making the dashboard TopMost or
+            // stealing focus from the game.
             var dashboard = new GameRouteLabV10Form();
             BindTelemetryText(dashboard);
             IspTrackerPatch.Apply(dashboard);
             TelemetryVisibilityPatch.Apply(dashboard);
+
+            using var crossFireGuard = new CrossFireWindowGuard(dashboard);
             Application.Run(dashboard);
         }
         catch (Exception ex)
