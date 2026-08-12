@@ -10,4 +10,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon Condition="Exists('assets\GameRouteLab.ico')">assets\GameRouteLab.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="GameRouteLabV10StableForm.cs" />
+  </ItemGroup>
 </Project>
