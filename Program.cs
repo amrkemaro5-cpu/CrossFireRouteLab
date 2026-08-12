@@ -18,9 +18,6 @@ internal static class Program
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
 
-            // v10 remains the active dashboard and its design/layout are unchanged.
-            // The guard prevents CrossFire fullscreen/Alt+Tab transitions from
-            // minimizing or hiding the dashboard without stealing game focus.
             var dashboard = new GameRouteLabV10Form();
             BindTelemetryText(dashboard);
             IspTrackerPatch.Apply(dashboard);
@@ -30,6 +27,7 @@ internal static class Program
             CrossFireConnectionDiscoveryPatch.Apply(dashboard);
             CrossFireRoomTransportPatch.Apply(dashboard);
             CrossFirePacketRoomDiscoveryPatchV2.Apply(dashboard);
+            CrossFireSameTransportProbe.Apply(dashboard);
             RouteOptimizerPatch.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
