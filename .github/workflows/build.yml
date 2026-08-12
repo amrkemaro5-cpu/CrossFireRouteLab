@@ -29,6 +29,7 @@ jobs:
           $path = Join-Path $env:GITHUB_WORKSPACE 'GameRouteLabV10Form.cs'
           $src = Get-Content $path -Raw
           $src = $src.Replace('static readonly Color Text =', 'new static readonly Color Text =')
+          $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
           $src = $src.Replace('Text="Game Route Lab v10";', 'base.Text="Game Route Lab v10";')
           $src = $src.Replace('Text="Game Route Lab v9";', 'base.Text="Game Route Lab v10";')
           $src = $src.Replace('ColumnCount=11', 'ColumnCount=10')
