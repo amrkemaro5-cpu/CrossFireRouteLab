@@ -23,6 +23,16 @@ jobs:
       - name: Restore
         run: dotnet restore CrossFireRouteLab.csproj
 
+      - name: Normalize v10 source before compile
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:GITHUB_WORKSPACE 'GameRouteLabV10Form.cs'
+          $src = Get-Content $path -Raw
+          $src = $src.Replace('static readonly Color Text =', 'new static readonly Color Text =')
+          $src = $src.Replace('Text="Game Route Lab v10";', 'base.Text="Game Route Lab v10";')
+          Set-Content $path $src -Encoding UTF8
+          Write-Host 'v10 compile normalization applied.'
+
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
 
@@ -52,17 +62,19 @@ jobs:
             static IEnumerable<Control> All(Control root) { foreach (Control c in root.Controls) { yield return c; foreach (var x in All(c)) yield return x; } }
             [STAThread] static void Main() {
               ApplicationConfiguration.Initialize();
-              using var form = new GameRouteLabV9Form();
+              using var form = new GameRouteLabV10Form();
               form.CreateControl(); form.PerformLayout(); form.Show(); Application.DoEvents();
               if (form.ClientSize.Width < 900 || form.ClientSize.Height < 650) throw new Exception($"Unexpected form size: {form.ClientSize}");
               var controls = All(form).ToList();
               if (!controls.OfType<Label>().Any(x => x.Text == "GAME ROUTE LAB")) throw new Exception("GRL title missing.");
               if (!controls.OfType<Label>().Any(x => x.Text == "GAME MEMORY")) throw new Exception("Game Memory missing.");
               if (!controls.OfType<Label>().Any(x => x.Text == "LIVE ANALYSIS CONSOLE")) throw new Exception("Console missing.");
-              if (!controls.OfType<Button>().Any(x => x.Text.Contains("AUTO ANALYZE"))) throw new Exception("Auto Analyze missing.");
-              if (!controls.OfType<Button>().Any(x => x.Text.Contains("ADD GAME EXE"))) throw new Exception("Add Game EXE missing.");
+              if (!controls.OfType<Button>().Any(x => x.Text == "AUTO ANALYZE")) throw new Exception("Auto Analyze missing.");
+              if (controls.Count(x => x is Button b && b.Text == "ADD GAME EXE") != 1) throw new Exception("Add Game EXE must appear exactly once.");
+              if (!controls.OfType<Label>().Any(x => x.Text == "NETWORK TELEMETRY")) throw new Exception("Network telemetry missing.");
+              if (!controls.OfType<Label>().Any(x => x.Text == "ROUTER INTELLIGENCE")) throw new Exception("Router intelligence missing.");
               if (controls.Any(c => c.Width <= 0 || c.Height <= 0)) throw new Exception("Invalid control dimensions.");
-              Console.WriteLine($"V9 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
+              Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
               form.Close();
             }
           }
@@ -92,8 +104,8 @@ jobs:
       - name: Verify standard ZIP extraction
         shell: pwsh
         run: |
-          $zip = Join-Path $env:RUNNER_TEMP 'GameRouteLab-v9-test.zip'
-          $out = Join-Path $env:RUNNER_TEMP 'GameRouteLab-v9-test-extracted'
+          $zip = Join-Path $env:RUNNER_TEMP 'GameRouteLab-v10-test.zip'
+          $out = Join-Path $env:RUNNER_TEMP 'GameRouteLab-v10-test-extracted'
           Compress-Archive -Path package\* -DestinationPath $zip -Force
           Expand-Archive -Path $zip -DestinationPath $out -Force
           if (-not (Test-Path $out\GameRouteLab.exe)) { throw 'ZIP verification failed.' }
@@ -102,7 +114,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: GameRouteLab-v9-Windows-x64
+          name: GameRouteLab-v10-Windows-x64
           path: package
           if-no-files-found: error
           compression-level: 6
