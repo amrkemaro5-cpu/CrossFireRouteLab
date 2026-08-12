@@ -33,25 +33,41 @@ jobs:
       - name: Publish Windows x64 self-contained
         run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -o publish-v8
 
-      - name: Verify executable
+      - name: Prepare clean v8 package folder
         shell: pwsh
         run: |
-          $exe = Get-Item publish-v8\GameRouteLab.exe
-          if ($exe.Length -lt 100KB) { throw 'GameRouteLab.exe is unexpectedly small.' }
-          Write-Host "v8 executable: $($exe.Length) bytes"
-
-      - name: Package
-        shell: pwsh
-        run: |
+          Remove-Item package-v8 -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path package-v8 | Out-Null
           Copy-Item publish-v8\* package-v8\ -Recurse -Force
           Copy-Item README.md package-v8\README.md -Force
           if (Test-Path USER_GUIDE.md) { Copy-Item USER_GUIDE.md package-v8\USER_GUIDE.md -Force }
-          Compress-Archive -Path package-v8\* -DestinationPath GameRouteLab-v8-Windows-x64.zip -Force
 
-      - name: Upload v8 package
+          $exe = Get-Item package-v8\GameRouteLab.exe
+          if ($exe.Length -lt 100KB) { throw 'GameRouteLab.exe is unexpectedly small.' }
+          if (-not (Test-Path package-v8\GameRouteLab.runtimeconfig.json)) { throw 'Runtime config is missing.' }
+          if (-not (Test-Path package-v8\GameRouteLab.deps.json)) { throw 'Dependency manifest is missing.' }
+          Write-Host "Clean package ready: $($exe.Length) bytes"
+
+      - name: Verify ZIP packaging is not encrypted
+        shell: pwsh
+        run: |
+          $testZip = Join-Path $env:RUNNER_TEMP 'GameRouteLab-v8-package-test.zip'
+          $testExtract = Join-Path $env:RUNNER_TEMP 'GameRouteLab-v8-package-test-extracted'
+          Remove-Item $testZip -Force -ErrorAction SilentlyContinue
+          Remove-Item $testExtract -Recurse -Force -ErrorAction SilentlyContinue
+
+          Compress-Archive -Path package-v8\* -DestinationPath $testZip -Force
+          Expand-Archive -Path $testZip -DestinationPath $testExtract -Force
+
+          if (-not (Test-Path $testExtract\GameRouteLab.exe)) {
+            throw 'ZIP verification failed: executable could not be extracted.'
+          }
+          Write-Host 'ZIP verification passed: standard non-encrypted ZIP extraction succeeded.'
+
+      - name: Upload clean v8 package
         uses: actions/upload-artifact@v4
         with:
-          name: GameRouteLab-v8-Windows-x64
-          path: GameRouteLab-v8-Windows-x64.zip
+          name: GameRouteLab-v8-Windows-x64-CLEAN
+          path: package-v8
           if-no-files-found: error
+          compression-level: 6
