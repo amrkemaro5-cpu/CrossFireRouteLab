@@ -17,9 +17,9 @@ internal static class Program
                 if (e.ExceptionObject is Exception ex) CrashReporter.Write(ex, "AppDomain");
             };
 
-            // v8 deliberately does NOT attach CrossFireWindowGuard. The old guard
-            // could interfere with Alt+Tab/fullscreen CrossFire window behavior.
-            Application.Run(new GameRouteLabV8Form());
+            // v9 uses a standalone dashboard. It does not install the old
+            // CrossFire window guard and does not alter fullscreen/game focus.
+            Application.Run(new GameRouteLabV9Form());
         }
         catch (Exception ex)
         {
