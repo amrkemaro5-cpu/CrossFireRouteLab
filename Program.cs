@@ -23,6 +23,7 @@ internal static class Program
             // TopMost, focus or fullscreen behavior.
             var dashboard = new GameRouteLabV10Form();
             BindTelemetryText(dashboard);
+            IspTrackerPatch.Apply(dashboard);
             Application.Run(dashboard);
         }
         catch (Exception ex)
@@ -35,12 +36,12 @@ internal static class Program
     {
         var flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var type = typeof(GameRouteLabV10Form);
-        var networkPanel = (Control?)type.GetField("network", flags)?.GetValue(form);
-        var routerPanel = (Control?)type.GetField("router", flags)?.GetValue(form);
-        var networkText = (Control?)type.GetField("netText", flags)?.GetValue(form);
+        var networkPanel = (Control?)type.GetField("networkPanel", flags)?.GetValue(form);
+        var routerPanel = (Control?)type.GetField("routerPanel", flags)?.GetValue(form);
+        var networkText = (Control?)type.GetField("networkText", flags)?.GetValue(form);
         var routerText = (Control?)type.GetField("routerText", flags)?.GetValue(form);
-        if (networkPanel != null && networkText != null) networkPanel.Controls.Add(networkText);
-        if (routerPanel != null && routerText != null) routerPanel.Controls.Add(routerText);
+        if (networkPanel != null && networkText != null && !networkPanel.Controls.Contains(networkText)) networkPanel.Controls.Add(networkText);
+        if (routerPanel != null && routerText != null && !routerPanel.Controls.Contains(routerText)) routerPanel.Controls.Add(routerText);
     }
 }
 
