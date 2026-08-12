@@ -45,18 +45,45 @@ jobs:
         run: |
           $path = Join-Path $env:GITHUB_WORKSPACE 'CrossFireRoomTransportProbeV3.cs'
           $src = Get-Content $path -Raw
+
           $old = 'var tcpRoom = room.FirstOrDefault(x => x.Protocol == "TCP"); var best = tcpRoom.RemoteIp != null ? tcpRoom : room.FirstOrDefault();'
           $new = 'var best = room.OrderByDescending(Score).FirstOrDefault();'
           if (-not $src.Contains($old)) { throw 'Expected V3 TCP-first selection bug was not found; refusing to build an unpatched package.' }
           $src = $src.Replace($old, $new)
-          Set-Content $path $src -Encoding UTF8
 
-          $ui = Join-Path $env:GITHUB_WORKSPACE 'CrossFireRoomLatencyUiPatch.cs'
-          $u = Get-Content $ui -Raw
-          $u = $u.Replace('● ACTUAL ROOM • {protocol} • RTT PENDING', '● ACTUAL ROOM • {protocol} • RTT NOT DERIVED')
-          $u = $u.Replace('STATUS     PASSIVE RTT PENDING', 'STATUS     RTT NOT DERIVED')
-          Set-Content $ui $u -Encoding UTF8
-          Write-Host 'CrossFire V3 room selection patched: highest-scoring bidirectional room flow wins; TCP 10009 can no longer hijack the room target.'
+          # Port 10009 is not automatically CONTROL anymore. If a normally-control
+          # port carries sustained bidirectional traffic, treat it as a real room
+          # candidate. Tiny 10009 flows remain control and cannot hijack selection.
+          $oldRoom = 'var room = candidates.Where(x => !ControlPorts.Contains(x.RemotePort)).ToList();'
+          $newRoom = 'var room = candidates.Where(x => !IsControlFlow(x)).ToList();'
+          if (-not $src.Contains($oldRoom)) { throw 'Expected room-filter expression was not found.' }
+          $src = $src.Replace($oldRoom, $newRoom)
+
+          $oldScore = 'if (f.Protocol == "UDP") score += 35; if (f.Protocol == "TCP") score += 20; if (f.RemotePort is >= 12000 and <= 14000) score += 100; else if (f.RemotePort is >= 11000 and <= 16000) score += 55; if (ControlPorts.Contains(f.RemotePort)) score -= 160;'
+          $newScore = 'if (f.Protocol == "UDP") score += 20; if (f.Protocol == "TCP") score += 20; if (f.RemotePort is >= 12000 and <= 14000) score += 100; else if (f.RemotePort is >= 11000 and <= 16000) score += 55; if (IsControlFlow(f)) score -= 160;'
+          if (-not $src.Contains($oldScore)) { throw 'Expected transport score expression was not found.' }
+          $src = $src.Replace($oldScore, $newScore)
+
+          $oldLabel = 'ControlPorts.Contains(c.RemotePort) ? "CONTROL" : "ROOM"'
+          $newLabel = 'IsControlFlow(c) ? "CONTROL" : "ROOM"'
+          if (-not $src.Contains($oldLabel)) { throw 'Expected endpoint label expression was not found.' }
+          $src = $src.Replace($oldLabel, $newLabel)
+
+          $marker = '    static void Publish(GameRouteLabV10Form form, List<Flow> candidates, (double RttMs, int Samples, string Method) roomRtt)'
+          $method = @'
+    static bool IsControlFlow(Flow f)
+    {
+        if (!ControlPorts.Contains(f.RemotePort)) return false;
+        if (f.Protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase) && f.In > 0 && f.Out > 0 && (f.In + f.Out) >= 20) return false;
+        return true;
+    }
+
+'@
+          if (-not $src.Contains($marker)) { throw 'Publish marker not found; refusing to build.' }
+          $src = $src.Replace($marker, $method + $marker)
+
+          Set-Content $path $src -Encoding UTF8
+          Write-Host 'Final room decision fixed: sustained bidirectional TCP/10009 can be a room endpoint; small control flows remain excluded; UDP no longer receives an arbitrary protocol bonus.'
 
       - name: Verify CrossFire room selection patch
         shell: pwsh
@@ -64,7 +91,10 @@ jobs:
           $src = Get-Content CrossFireRoomTransportProbeV3.cs -Raw
           if ($src.Contains('var tcpRoom = room.FirstOrDefault(x => x.Protocol == "TCP");')) { throw 'TCP-first room selection still present.' }
           if (-not $src.Contains('var best = room.OrderByDescending(Score).FirstOrDefault();')) { throw 'Room-score selection patch missing.' }
-          Write-Host 'CrossFire room selection verification passed.'
+          if (-not $src.Contains('static bool IsControlFlow(Flow f)')) { throw 'Dynamic control-flow classifier missing.' }
+          if (-not $src.Contains('var room = candidates.Where(x => !IsControlFlow(x)).ToList();')) { throw 'Dynamic room filter missing.' }
+          if (-not $src.Contains('if (f.Protocol == "UDP") score += 20; if (f.Protocol == "TCP") score += 20;')) { throw 'Protocol-neutral scoring missing.' }
+          Write-Host 'CrossFire final room selection verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release --no-restore -warnaserror
