@@ -11,7 +11,7 @@ internal static class TelemetryVisibilityPatch
     static readonly Color Cyan = Color.FromArgb(0, 225, 255);
     static readonly Color Purple = Color.FromArgb(188, 72, 255);
     static readonly Color Green = Color.FromArgb(40, 242, 122);
-    static readonly Color Text = Color.FromArgb(238, 246, 255);
+    static readonly Color TextColor = Color.FromArgb(238, 246, 255);
     static readonly Color Muted = Color.FromArgb(132, 157, 190);
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
 
@@ -56,9 +56,9 @@ internal static class TelemetryVisibilityPatch
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             BackColor = Surface;
             state.Text = "● WAITING"; state.ForeColor = Muted; state.Font = new Font("Segoe UI Semibold", 7.5f); state.AutoSize = false; state.TextAlign = ContentAlignment.MiddleRight;
-            body.ForeColor = Text; body.BackColor = Color.Transparent; body.Font = new Font("Cascadia Mono", 7.7f); body.AutoEllipsis = false;
+            body.ForeColor = TextColor; body.BackColor = Color.Transparent; body.Font = new Font("Cascadia Mono", 7.7f); body.AutoEllipsis = false;
             body.Text = serverTracker ? "Local interface telemetry\r\nPress DETECT NETWORK to populate." : "Gateway / interface telemetry\r\nPress DETECT ROUTER to populate.";
-            tracker.ForeColor = Text; tracker.BackColor = Color.Transparent; tracker.Font = new Font("Cascadia Mono", 7.5f); tracker.Text = "ISP / SERVER TRACKER\r\nWaiting for a selected game endpoint…";
+            tracker.ForeColor = TextColor; tracker.BackColor = Color.Transparent; tracker.Font = new Font("Cascadia Mono", 7.5f); tracker.Text = "ISP / SERVER TRACKER\r\nWaiting for a selected game endpoint…";
             Controls.Add(state); Controls.Add(body); if (serverTracker) Controls.Add(tracker);
             timer.Tick += async (_, _) => await Tick(); timer.Start(); Disposed += (_, _) => timer.Dispose();
         }
