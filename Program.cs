@@ -27,6 +27,7 @@ internal static class Program
             TelemetryVisibilityPatch.Apply(dashboard);
             AutoOptimizationPatch.Apply(dashboard);
             EndpointMeasurementPatch.Apply(dashboard);
+            RouteOptimizerPatch.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
             Application.Run(dashboard);
