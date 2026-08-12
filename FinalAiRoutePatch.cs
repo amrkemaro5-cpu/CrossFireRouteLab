@@ -7,446 +7,136 @@ using System.Windows.Forms;
 
 namespace CrossFireRouteLab;
 
-/// <summary>
-/// Final one-click route optimizer. The "AI" is an adaptive deterministic
-/// scoring engine using measured latency, jitter and loss. It only changes a
-/// /32 route for the verified CrossFire TCP room endpoint; it never changes
-/// the whole Windows default route.
-/// </summary>
 internal static class FinalAiRoutePatch
 {
     static bool installed;
-    static int running;
-    static Button? optimizeButton;
-    static Label? statusLabel;
-    static System.Threading.Timer? monitor;
-    static string? managedIp;
-    static DefaultRoute? managedRoute;
-    static readonly string Store = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GameRouteLab", "route-ai-history.json");
-
+    static int busy;
+    static Button? button;
+    static Label? status;
     const int Samples = 7;
     const int TimeoutMs = 1200;
-    const double MinimumImprovementMs = 3.0;
-    const double MinimumImprovementPct = 0.05;
+    const double MinMs = 3;
+    const double MinPct = .05;
 
     public static void Apply(Form form)
     {
         if (installed || form.IsDisposed) return;
         installed = true;
-        Install(form);
-    }
-
-    static void Install(Form form)
-    {
-        // Replace the old one-click button so the legacy analysis handlers
-        // cannot launch several competing passes at the same time.
-        var legacy = Find(form, "AUTO ANALYZE");
-        if (legacy != null)
+        var old = Find(form, "AUTO ANALYZE");
+        if (old != null)
         {
-            var parent = legacy.Parent;
-            var bounds = legacy.Bounds;
-            legacy.Visible = false;
-            optimizeButton = new Button
-            {
-                Text = "AI OPTIMIZE ROUTE",
-                Bounds = bounds,
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = Color.White,
-                BackColor = Color.FromArgb(7, 13, 27),
-                Font = legacy.Font,
-                TabIndex = legacy.TabIndex
-            };
-            optimizeButton.FlatAppearance.BorderColor = Color.FromArgb(40, 242, 122);
-            optimizeButton.FlatAppearance.BorderSize = 1;
-            optimizeButton.Click += async (_, _) => await RunOneClick(form);
-            parent?.Controls.Add(optimizeButton);
-            optimizeButton.BringToFront();
+            var parent = old.Parent;
+            old.Visible = false;
+            button = new Button { Text = "AI OPTIMIZE ROUTE", Bounds = old.Bounds, FlatStyle = FlatStyle.Flat, ForeColor = Color.White, BackColor = Color.FromArgb(7,13,27), Font = old.Font };
+            button.FlatAppearance.BorderColor = Color.FromArgb(40,242,122);
+            button.FlatAppearance.BorderSize = 1;
+            button.Click += async (_,_) => await Optimize(form);
+            parent?.Controls.Add(button);
+            button.BringToFront();
         }
-
         AddStatus(form);
-        monitor = new System.Threading.Timer(_ => PassiveHealthCheck(form), null, 15000, 15000);
-        Log(form, "[AI ROUTE] One-click optimizer ready. TCP-only CrossFire room routing; no UDP probes; no synthetic game packets.");
+        Log(form, "[AI ROUTE] READY — one-click TCP route optimizer armed; UDP disabled; no synthetic game packets.");
     }
 
-    static async Task RunOneClick(Form form)
+    static async Task Optimize(Form form)
     {
-        if (Interlocked.Exchange(ref running, 1) != 0) return;
+        if (Interlocked.Exchange(ref busy,1) != 0) return;
         SetButton(false);
         try
         {
-            SetStatus("AI OPTIMIZING • MEASURING ROUTES");
-            Log(form, "[AI ROUTE] Starting complete route optimization. Keep CrossFire inside the active room.");
-
-            if (!IsCrossFire(form))
+            SetStatus("AI ROUTE • TESTING");
+            if (!IsCrossFire(form)) { Fail(form,"Start CrossFire and enter an online room first."); return; }
+            if (!TryRoom(out var ip,out var port,out var proto) || !proto.Equals("TCP",StringComparison.OrdinalIgnoreCase)) { Fail(form,"No verified CrossFire TCP room endpoint yet."); return; }
+            Log(form,$"[AI ROUTE] TARGET {ip}:{port} TCP — live CrossFire room endpoint.");
+            var routes = await Defaults();
+            if (routes.Count == 0) { Fail(form,"No active IPv4 default route found; nothing was changed."); return; }
+            var baseline = await Measure(ip,port,Samples);
+            Log(form,Msg("CURRENT",baseline));
+            var tests = new List<Result>();
+            foreach(var r in routes)
             {
-                Fail(form, "CrossFire is not the active game. Start CrossFire and enter an online room first.");
-                return;
+                if(!await AddRoute(ip,r)) { Log(form,$"[AI ROUTE] SKIP {r.Alias} → {r.Gateway}: route test rejected."); continue; }
+                Measurement m;
+                try { m=await Measure(ip,port,Samples); } finally { await RemoveRoute(ip); }
+                tests.Add(new Result(r,m,Score(m)));
+                Log(form,$"[AI ROUTE] TEST {r.Alias} → {r.Gateway}: {Msg("",m)} score={Score(m):0.0}.");
             }
-
-            if (!TryRoom(out var ip, out var port, out var protocol) || !protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase))
+            if(tests.Count==0){ Fail(form,"No route candidate could be measured; current route left untouched."); return; }
+            var best=tests.OrderBy(x=>x.Score).First();
+            var delta=baseline.Median-best.Measurement.Median;
+            var pct=baseline.Median>0?delta/baseline.Median:0;
+            var better=best.Measurement.Median>=0 && baseline.Median>=0 && Score(best.Measurement)+Math.Max(.5,Score(baseline)*.02)<Score(baseline) && (delta>=MinMs||pct>=MinPct);
+            if(!better){ SetStatus("AI ROUTE • CURRENT RETAINED"); Log(form,$"[AI ROUTE] DECISION: current path retained. Best candidate Δ {delta:0.0} ms / {pct:P0} is not material."); return; }
+            Log(form,$"[AI ROUTE] WINNER {best.Route.Alias} → {best.Route.Gateway}; estimated gain {delta:0.0} ms ({pct:P0}).");
+            Log(form,"[AI ROUTE] APPLYING ONLY A /32 ROUTE FOR THE CURRENT CrossFire ROOM SERVER.");
+            if(!await AddRoute(ip,best.Route)){ Fail(form,"Windows refused the selected /32 route; nothing was left changed."); return; }
+            var verified=await Measure(ip,port,Samples);
+            Log(form,Msg("APPLIED",verified));
+            if(!Better(verified,baseline))
             {
-                Fail(form, "No verified CrossFire TCP room endpoint is available yet.");
-                return;
-            }
-
-            Log(form, $"[AI ROUTE] TARGET {ip}:{port} TCP — verified from CrossFire live connections.");
-
-            var routes = await ReadDefaultRoutes();
-            if (routes.Count == 0)
-            {
-                Fail(form, "No active IPv4 default route was found.");
-                return;
-            }
-
-            var baseline = await MeasureTcp(ip, port, Samples);
-            Log(form, FormatMeasurement("CURRENT PATH", baseline));
-
-            var candidates = new List<RouteCandidate>();
-            foreach (var route in routes)
-            {
-                if (!await AddTestRoute(ip, route))
-                {
-                    Log(form, $"[AI ROUTE] SKIP {route.Alias} → {route.Gateway}: Windows rejected the test route.");
-                    continue;
-                }
-
-                Measurement measurement;
-                try { measurement = await MeasureTcp(ip, port, Samples); }
-                finally { await RemoveTestRoute(ip); }
-
-                var score = Score(measurement);
-                candidates.Add(new RouteCandidate(route, measurement, score));
-                Log(form, $"[AI ROUTE] TEST {route.Alias} → {route.Gateway}: {FormatMeasurement("", measurement)} score={score:0.0}.");
-            }
-
-            var baselineScore = Score(baseline);
-            var best = candidates.OrderBy(c => c.Score).FirstOrDefault();
-            if (best == null)
-            {
-                Fail(form, "No candidate route could be measured. The current route was left untouched.");
-                return;
-            }
-
-            var improvementMs = baseline.MedianMs >= 0 && best.Measurement.MedianMs >= 0
-                ? baseline.MedianMs - best.Measurement.MedianMs : 0;
-            var improvementPct = baseline.MedianMs > 0 ? improvementMs / baseline.MedianMs : 0;
-            var materiallyBetter = best.Score + Math.Max(0.5, baselineScore * 0.02) < baselineScore
-                && (improvementMs >= MinimumImprovementMs || improvementPct >= MinimumImprovementPct);
-
-            if (!materiallyBetter)
-            {
-                SetStatus("AI ROUTE • CURRENT PATH RETAINED");
-                Log(form, $"[AI ROUTE] DECISION: keep current route. Best candidate is not materially better (Δ {improvementMs:0.0} ms / {improvementPct:P0}).");
-                SaveHistory(ip, port, baseline, null, "retained-current");
-                return;
-            }
-
-            Log(form, $"[AI ROUTE] WINNER: {best.Route.Alias} → {best.Route.Gateway}; estimated improvement {improvementMs:0.0} ms ({improvementPct:P0}).");
-            Log(form, "[AI ROUTE] APPLYING ONLY A /32 ROUTE FOR THIS CrossFire ROOM SERVER.");
-
-            if (!await AddPersistentRoomRoute(ip, best.Route))
-            {
-                Fail(form, "The best route was measurable but Windows refused to apply the CrossFire /32 route. Current route remains active.");
-                SaveHistory(ip, port, baseline, best, "apply-failed");
-                return;
-            }
-
-            var verified = await MeasureTcp(ip, port, Samples);
-            Log(form, FormatMeasurement("APPLIED PATH", verified));
-
-            if (!IsBetter(verified, baseline))
-            {
-                Log(form, "[AI ROUTE] VERIFICATION FAILED: applied route did not beat the baseline. Rolling it back immediately.");
-                await RemovePersistentRoomRoute(ip, best.Route);
+                await RemoveSpecificRoute(ip,best.Route);
                 SetStatus("AI ROUTE • ROLLED BACK");
-                SaveHistory(ip, port, baseline, best, "rolled-back");
+                Log(form,"[AI ROUTE] VERIFICATION FAILED — route rolled back automatically.");
                 return;
             }
-
-            managedIp = ip;
-            managedRoute = best.Route;
             SetStatus("AI ROUTE • ACTIVE • VERIFIED");
-            Log(form, $"[AI ROUTE] SUCCESS: {ip}:{port} is now routed through {best.Route.Alias} → {best.Route.Gateway}.");
-            Log(form, $"[AI ROUTE] VERIFIED improvement: {baseline.MedianMs:0.0} ms → {verified.MedianMs:0.0} ms; jitter {verified.JitterMs:0.0} ms; loss {verified.LossPct:0.0}%.");
-            Log(form, "[AI ROUTE] NOTE: existing TCP sessions cannot be moved by Windows. Rejoin the CrossFire room if the game keeps the old socket.");
-            SaveHistory(ip, port, baseline, best, "applied");
+            Log(form,$"[AI ROUTE] SUCCESS — {ip}:{port} now uses {best.Route.Alias} → {best.Route.Gateway}.");
+            Log(form,$"[AI ROUTE] VERIFIED: {baseline.Median:0.0} ms → {verified.Median:0.0} ms; jitter {verified.Jitter:0.0} ms; loss {verified.Loss:0.0}%.");
+            Log(form,"[AI ROUTE] Rejoin the CrossFire room if the game keeps its existing TCP socket; Windows cannot migrate an established TCP session.");
         }
-        catch (Exception ex)
-        {
-            Fail(form, "Optimizer error: " + ex.Message);
-        }
-        finally
-        {
-            Interlocked.Exchange(ref running, 0);
-            SetButton(true);
-        }
+        catch(Exception ex){ Fail(form,"Optimizer error: "+ex.Message); }
+        finally { Interlocked.Exchange(ref busy,0); SetButton(true); }
     }
 
-    static bool IsBetter(Measurement after, Measurement before)
-    {
-        if (after.MedianMs < 0 || before.MedianMs < 0) return false;
-        return after.MedianMs + MinimumImprovementMs < before.MedianMs
-            && after.LossPct <= before.LossPct + 5
-            && after.JitterMs <= Math.Max(before.JitterMs + 2, before.JitterMs * 1.25);
-    }
+    static bool Better(Measurement a,Measurement b)=>a.Median>=0&&b.Median>=0&&a.Median+MinMs<b.Median&&a.Loss<=b.Loss+5&&a.Jitter<=Math.Max(b.Jitter+2,b.Jitter*1.25);
+    static double Score(Measurement m)=>m.Median<0?1e9:m.Median+m.Jitter*.75+Math.Max(0,m.P95-m.Median)*.35+m.Loss*8;
 
-    static double Score(Measurement m)
+    static async Task<Measurement> Measure(string ip,int port,int count)
     {
-        if (m.MedianMs < 0) return 1_000_000;
-        return m.MedianMs
-            + m.JitterMs * 0.75
-            + Math.Max(0, m.P95Ms - m.MedianMs) * 0.35
-            + m.LossPct * 8.0;
-    }
-
-    static async Task<Measurement> MeasureTcp(string ip, int port, int count)
-    {
-        var values = new List<double>();
-        var failures = 0;
-        for (var i = 0; i < count; i++)
+        var v=new List<double>(); var fail=0;
+        for(int i=0;i<count;i++)
         {
-            var sw = Stopwatch.StartNew();
-            try
-            {
-                using var c = new TcpClient { NoDelay = true };
-                var task = c.ConnectAsync(ip, port);
-                if (await Task.WhenAny(task, Task.Delay(TimeoutMs)) == task && c.Connected)
-                {
-                    sw.Stop();
-                    values.Add(sw.Elapsed.TotalMilliseconds);
-                }
-                else failures++;
-            }
-            catch { failures++; }
+            var sw=Stopwatch.StartNew();
+            try{using var c=new TcpClient{NoDelay=true};var t=c.ConnectAsync(ip,port);if(await Task.WhenAny(t,Task.Delay(TimeoutMs))==t&&c.Connected){sw.Stop();v.Add(sw.Elapsed.TotalMilliseconds);}else fail++;}catch{fail++;}
             await Task.Delay(80);
         }
-
-        if (values.Count == 0) return new Measurement(-1, -1, -1, 100, count, 0);
-        values.Sort();
-        var median = Percentile(values, 0.50);
-        var p95 = Percentile(values, 0.95);
-        var mean = values.Average();
-        var variance = values.Sum(v => Math.Pow(v - mean, 2)) / values.Count;
-        var jitter = Math.Sqrt(variance);
-        var loss = failures * 100.0 / count;
-        return new Measurement(median, p95, jitter, loss, count, values.Count);
+        if(v.Count==0)return new(-1,-1,-1,100,count,0);
+        v.Sort();var med=P(v,.5);var p95=P(v,.95);var mean=v.Average();var jit=Math.Sqrt(v.Sum(x=>Math.Pow(x-mean,2))/v.Count);
+        return new(med,p95,jit,fail*100.0/count,count,v.Count);
     }
+    static double P(List<double> v,double p){if(v.Count==1)return v[0];var x=(v.Count-1)*p;var a=(int)Math.Floor(x);var b=(int)Math.Ceiling(x);return a==b?v[a]:v[a]+(v[b]-v[a])*(x-a);}
 
-    static double Percentile(List<double> sorted, double p)
+    static async Task<List<Route>> Defaults()
     {
-        if (sorted.Count == 1) return sorted[0];
-        var index = (sorted.Count - 1) * p;
-        var lo = (int)Math.Floor(index);
-        var hi = (int)Math.Ceiling(index);
-        return lo == hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (index - lo);
+        const string c="Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -PolicyStore ActiveStore | ForEach-Object { $a=Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue; [pscustomobject]@{I=$_.InterfaceIndex;A=$a.Name;G=$_.NextHop;M=$_.RouteMetric;U=($a.Status -eq 'Up')} } | ConvertTo-Json -Compress";
+        var text=await PS(c,8000);var list=new List<Route>();
+        try{using var d=JsonDocument.Parse(text.Trim());var es=d.RootElement.ValueKind==JsonValueKind.Array?d.RootElement.EnumerateArray().ToList():new(){d.RootElement};foreach(var x in es){var r=new Route(I(x,"I"),S(x,"A"),S(x,"G"),I(x,"M"),x.TryGetProperty("U",out var u)&&u.GetBoolean());if(r.Up&&r.Index>0&&IPAddress.TryParse(r.Gateway,out var g)&&!g.Equals(IPAddress.Any))list.Add(r);}}catch{}
+        return list.GroupBy(x=>(x.Index,x.Gateway)).Select(g=>g.OrderBy(x=>x.Metric).First()).ToList();
     }
 
-    static async Task<List<DefaultRoute>> ReadDefaultRoutes()
-    {
-        const string cmd = "Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -PolicyStore ActiveStore | ForEach-Object { $a=Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue; [pscustomobject]@{InterfaceIndex=$_.InterfaceIndex;Alias=$a.Name;Gateway=$_.NextHop;Metric=$_.RouteMetric;Up=($a.Status -eq 'Up')} } | ConvertTo-Json -Compress";
-        var output = await RunPowerShell(cmd, 8000);
-        var result = new List<DefaultRoute>();
-        try
-        {
-            using var doc = JsonDocument.Parse(output.Trim());
-            var items = doc.RootElement.ValueKind == JsonValueKind.Array
-                ? doc.RootElement.EnumerateArray().ToList()
-                : new List<JsonElement> { doc.RootElement };
-            foreach (var x in items)
-            {
-                var route = new DefaultRoute(ReadInt(x, "InterfaceIndex"), Read(x, "Alias"), Read(x, "Gateway"), ReadInt(x, "Metric"), x.TryGetProperty("Up", out var up) && up.GetBoolean());
-                if (route.Up && route.InterfaceIndex > 0 && IPAddress.TryParse(route.Gateway, out var gw) && !gw.Equals(IPAddress.Any))
-                    result.Add(route);
-            }
-        }
-        catch { }
-        return result.GroupBy(r => (r.InterfaceIndex, r.Gateway)).Select(g => g.OrderBy(r => r.Metric).First()).ToList();
-    }
+    static async Task<bool> AddRoute(string ip,Route r){await RemoveRoute(ip);var c=$"New-NetRoute -DestinationPrefix '{ip}/32' -InterfaceIndex {r.Index} -NextHop '{r.Gateway}' -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null; Write-Output 'OK'";return (await PS(c,6000)).Contains("OK",StringComparison.OrdinalIgnoreCase);}
+    static async Task RemoveRoute(string ip){await PS($"Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '{ip}/32' -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Where-Object {{$_.RouteMetric -eq 1 -and $_.Protocol -eq 3}} | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue",6000);}
+    static async Task RemoveSpecificRoute(string ip,Route r){await PS($"Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '{ip}/32' -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Where-Object {{$_.InterfaceIndex -eq {r.Index} -and $_.NextHop -eq '{r.Gateway}'}} | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue",6000);}
 
-    static async Task<bool> AddTestRoute(string ip, DefaultRoute route)
-    {
-        await RemoveTestRoute(ip);
-        var cmd = $"New-NetRoute -DestinationPrefix '{ip}/32' -InterfaceIndex {route.InterfaceIndex} -NextHop '{route.Gateway}' -RouteMetric 1 -PolicyStore ActiveStore -ErrorAction Stop | Out-Null; Write-Output 'OK'";
-        var output = await RunPowerShell(cmd, 6000);
-        return output.Contains("OK", StringComparison.OrdinalIgnoreCase);
-    }
+    static async Task<string> PS(string command,int timeout)=>await Task.Run(()=>{
+        try{using var p=new Process{StartInfo=new ProcessStartInfo{FileName="powershell.exe",Arguments="-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "+Quote(command),UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true}};p.Start();if(!p.WaitForExit(timeout)){try{p.Kill();}catch{}return "timeout";}return p.StandardOutput.ReadToEnd()+p.StandardError.ReadToEnd();}catch{return "";}
+    });
+    static string Quote(string s)=>"'"+s.Replace("'","''")+"'";
 
-    static async Task<bool> AddPersistentRoomRoute(string ip, DefaultRoute route) => await AddTestRoute(ip, route);
+    static void AddStatus(Form f){var h=f.Controls.Cast<Control>().FirstOrDefault(x=>x.Controls.Cast<Control>().Any(y=>y.Text=="GAME ROUTE LAB"));if(h==null)return;status=new Label{AutoSize=false,TextAlign=ContentAlignment.MiddleCenter,Text="AI ROUTE ENGINE • READY",ForeColor=Color.FromArgb(40,242,122),BackColor=Color.FromArgb(7,13,27),Bounds=new Rectangle(1220,88,240,24),Font=new Font("Segoe UI Semibold",8f)};h.Controls.Add(status);status.BringToFront();}
+    static void SetStatus(string s){try{if(status!=null&&!status.IsDisposed)status.BeginInvoke((Action)(()=>status.Text=s));}catch{}}
+    static void SetButton(bool e){try{if(button!=null&&!button.IsDisposed)button.BeginInvoke((Action)(()=>button.Enabled=e));}catch{}}
+    static void Fail(Form f,string s){SetStatus("AI ROUTE • NO CHANGE");Log(f,"[AI ROUTE] "+s);}
+    static bool IsCrossFire(Form f)=>(f.GetType().GetField("gameName",BindingFlags.Instance|BindingFlags.NonPublic)?.GetValue(f)?.ToString()??"").Contains("crossfire",StringComparison.OrdinalIgnoreCase);
+    static bool TryRoom(out string ip,out int port,out string proto){ip="";port=0;proto="";try{return CrossFireRoomTransportProbeV3.TryGetTarget(out ip,out port,out proto);}catch{return false;}}
+    static Button? Find(Control r,string t)=>All(r).OfType<Button>().FirstOrDefault(x=>x.Text.Equals(t,StringComparison.OrdinalIgnoreCase));
+    static IEnumerable<Control> All(Control r){foreach(Control c in r.Controls){yield return c;foreach(var x in All(c))yield return x;}}
+    static void Log(Form f,string s){try{if(!f.IsDisposed)f.BeginInvoke((Action)(()=>f.GetType().GetMethod("Log",BindingFlags.Instance|BindingFlags.NonPublic)?.Invoke(f,new object[]{s})));}catch{}}
+    static string Msg(string name,Measurement m)=>m.Median<0?$"[AI ROUTE] {name}: unavailable ({m.Loss:0}% loss).":$"[AI ROUTE] {name}: median {m.Median:0.0} ms, p95 {m.P95:0.0} ms, jitter {m.Jitter:0.0} ms, loss {m.Loss:0.0}% ({m.Successes}/{m.Attempts}).";
+    static string S(JsonElement x,string n)=>x.TryGetProperty(n,out var p)&&p.ValueKind!=JsonValueKind.Null?p.ToString():"";
+    static int I(JsonElement x,string n)=>x.TryGetProperty(n,out var p)&&p.TryGetInt32(out var v)?v:0;
 
-    static async Task RemoveTestRoute(string ip)
-    {
-        var cmd = $"Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '{ip}/32' -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Where-Object {{ $_.RouteMetric -eq 1 -and $_.Protocol -eq 3 }} | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue";
-        await RunPowerShell(cmd, 6000);
-    }
-
-    static async Task RemovePersistentRoomRoute(string ip, DefaultRoute route)
-    {
-        var cmd = $"Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '{ip}/32' -PolicyStore ActiveStore -ErrorAction SilentlyContinue | Where-Object {{ $_.InterfaceIndex -eq {route.InterfaceIndex} -and $_.NextHop -eq '{route.Gateway}' }} | Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue";
-        await RunPowerShell(cmd, 6000);
-    }
-
-    static void PassiveHealthCheck(Form form)
-    {
-        if (Volatile.Read(ref running) != 0 || !IsCrossFire(form)) return;
-        if (!TryRoom(out var ip, out var port, out var protocol) || !protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)) return;
-
-        if (managedIp != null && managedRoute.HasValue && !managedIp.Equals(ip, StringComparison.OrdinalIgnoreCase))
-        {
-            var oldIp = managedIp;
-            var oldRoute = managedRoute.Value;
-            managedIp = null;
-            managedRoute = null;
-            _ = RemovePersistentRoomRoute(oldIp, oldRoute);
-            Log(form, $"[AI ROUTE] ROOM CHANGED: removed the old /32 route for {oldIp}; the new room will be evaluated normally.");
-        }
-
-        _ = Task.Run(async () =>
-        {
-            var m = await MeasureTcp(ip, port, 3);
-            Log(form, $"[AI ROUTE] HEALTH {ip}:{port}: {(m.MedianMs < 0 ? "unreachable" : $"{m.MedianMs:0.0} ms median, {m.JitterMs:0.0} ms jitter, {m.LossPct:0.0}% loss")}");
-        });
-    }
-
-    static void SaveHistory(string ip, int port, Measurement baseline, RouteCandidate? winner, string decision)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(Store)!);
-            var history = LoadHistory();
-            history.Add(new HistoryItem
-            {
-                TimeUtc = DateTime.UtcNow,
-                Ip = ip,
-                Port = port,
-                BaselineMedianMs = baseline.MedianMs,
-                Winner = winner?.Route.Alias ?? "",
-                WinnerGateway = winner?.Route.Gateway ?? "",
-                WinnerMedianMs = winner?.Measurement.MedianMs ?? -1,
-                Decision = decision
-            });
-            File.WriteAllText(Store, JsonSerializer.Serialize(history.TakeLast(100), new JsonSerializerOptions { WriteIndented = true }));
-        }
-        catch { }
-    }
-
-    static List<HistoryItem> LoadHistory()
-    {
-        try { return File.Exists(Store) ? JsonSerializer.Deserialize<List<HistoryItem>>(File.ReadAllText(Store)) ?? new() : new(); }
-        catch { return new(); }
-    }
-
-    static string FormatMeasurement(string label, Measurement m)
-    {
-        if (m.MedianMs < 0) return $"[AI ROUTE] {label}: unavailable ({m.LossPct:0}% loss).";
-        return $"[AI ROUTE] {label}: median {m.MedianMs:0.0} ms, p95 {m.P95Ms:0.0} ms, jitter {m.JitterMs:0.0} ms, loss {m.LossPct:0.0}% ({m.Successes}/{m.Attempts}).";
-    }
-
-    static void AddStatus(Form form)
-    {
-        var header = form.Controls.Cast<Control>().FirstOrDefault(c => c.Controls.Cast<Control>().Any(x => x.Text == "GAME ROUTE LAB"));
-        if (header == null) return;
-        statusLabel = new Label
-        {
-            AutoSize = false,
-            TextAlign = ContentAlignment.MiddleCenter,
-            Text = "AI ROUTE ENGINE • READY",
-            ForeColor = Color.FromArgb(40, 242, 122),
-            BackColor = Color.FromArgb(7, 13, 27),
-            Bounds = new Rectangle(1220, 88, 240, 24),
-            Font = new Font("Segoe UI Semibold", 8f)
-        };
-        header.Controls.Add(statusLabel);
-        statusLabel.BringToFront();
-    }
-
-    static void SetStatus(string text)
-    {
-        try { if (statusLabel != null && !statusLabel.IsDisposed) statusLabel.BeginInvoke((Action)(() => statusLabel.Text = text)); } catch { }
-    }
-
-    static void SetButton(bool enabled)
-    {
-        try { if (optimizeButton != null && !optimizeButton.IsDisposed) optimizeButton.BeginInvoke((Action)(() => optimizeButton.Enabled = enabled)); } catch { }
-    }
-
-    static void Fail(Form form, string message)
-    {
-        SetStatus("AI ROUTE • NO CHANGE");
-        Log(form, "[AI ROUTE] " + message);
-    }
-
-    static bool TryRoom(out string ip, out int port, out string protocol)
-    {
-        ip = ""; port = 0; protocol = "";
-        try { return CrossFireRoomTransportProbeV3.TryGetTarget(out ip, out port, out protocol); }
-        catch { return false; }
-    }
-
-    static bool IsCrossFire(Form f) => (f.GetType().GetField("gameName", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(f)?.ToString() ?? "").Contains("crossfire", StringComparison.OrdinalIgnoreCase);
-    static Button? Find(Control root, string text) => All(root).OfType<Button>().FirstOrDefault(b => b.Text.Equals(text, StringComparison.OrdinalIgnoreCase));
-
-    static IEnumerable<Control> All(Control root)
-    {
-        foreach (Control c in root.Controls)
-        {
-            yield return c;
-            foreach (var n in All(c)) yield return n;
-        }
-    }
-
-    static void Log(Form f, string message)
-    {
-        try
-        {
-            if (f.IsDisposed) return;
-            f.BeginInvoke((Action)(() => f.GetType().GetMethod("Log", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(f, new object[] { message })));
-        }
-        catch { }
-    }
-
-    static async Task<string> RunPowerShell(string command, int timeout)
-    {
-        return await Task.Run(() =>
-        {
-            try
-            {
-                using var p = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = "powershell.exe",
-                        Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " + Quote(command),
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
-                    }
-                };
-                p.Start();
-                if (!p.WaitForExit(timeout)) { try { p.Kill(); } catch { } return "timeout"; }
-                return p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
-            }
-            catch { return ""; }
-        });
-    }
-
-    static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
-    static string Read(JsonElement x, string name) => x.TryGetProperty(name, out var p) && p.ValueKind != JsonValueKind.Null ? p.ToString() : "";
-    static int ReadInt(JsonElement x, string name) => x.TryGetProperty(name, out var p) && p.TryGetInt32(out var v) ? v : 0;
-
-    readonly record struct DefaultRoute(int InterfaceIndex, string Alias, string Gateway, int Metric, bool Up);
-    readonly record struct Measurement(double MedianMs, double P95Ms, double JitterMs, double LossPct, int Attempts, int Successes);
-    readonly record struct RouteCandidate(DefaultRoute Route, Measurement Measurement, double Score);
-
-    sealed class HistoryItem
-    {
-        public DateTime TimeUtc { get; set; }
-        public string Ip { get; set; } = "";
-        public int Port { get; set; }
-        public double BaselineMedianMs { get; set; }
-        public string Winner { get; set; } = "";
-        public string WinnerGateway { get; set; } = "";
-        public double WinnerMedianMs { get; set; }
-        public string Decision { get; set; } = "";
-    }
+    readonly record struct Route(int Index,string Alias,string Gateway,int Metric,bool Up);
+    readonly record struct Measurement(double Median,double P95,double Jitter,double Loss,int Attempts,int Successes);
+    readonly record struct Result(Route Route,Measurement Measurement,double Score);
 }
