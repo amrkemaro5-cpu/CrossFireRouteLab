@@ -20,6 +20,10 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Normalize v8 source before build
+        shell: pwsh
+        run: .\fix_v8_build.ps1
+
       - name: Restore
         run: dotnet restore CrossFireRouteLab.csproj
 
