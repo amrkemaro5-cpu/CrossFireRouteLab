@@ -68,6 +68,9 @@ internal sealed class CrossFireWindowGuard : IDisposable
     [DllImport("user32.dll")]
     static extern IntPtr GetForegroundWindow();
 
+    [DllImport("user32.dll")]
+    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
     public CrossFireWindowGuard(Form dashboard)
     {
         this.dashboard = dashboard ?? throw new ArgumentNullException(nameof(dashboard));
@@ -131,9 +134,6 @@ internal sealed class CrossFireWindowGuard : IDisposable
         catch { return false; }
     }
 
-    [DllImport("user32.dll")]
-    static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
     void CheckWindowState()
     {
         if (disposed || dashboard.IsDisposed || !dashboard.IsHandleCreated) return;
@@ -162,7 +162,7 @@ internal sealed class CrossFireWindowGuard : IDisposable
             // SW_SHOWNOACTIVATE restores the dashboard while leaving CrossFire
             // as the active application. No TopMost and no z-order promotion.
             ShowWindowAsync(dashboard.Handle, SwShowNoActivate);
-            NativeWindow.UpdateWindowRegion(dashboard.Handle, SwpNoActivate | SwpShowWindow | SwpNoMove | SwpNoSize | SwpNoZOrder);
+            GuardWindow.UpdateWindowRegion(dashboard.Handle, SwpNoActivate | SwpShowWindow | SwpNoMove | SwpNoSize | SwpNoZOrder);
         }
         catch { }
     }
@@ -218,12 +218,6 @@ internal sealed class CrossFireWindowGuard : IDisposable
                         }
                     }
                     catch { }
-                }
-
-                if (m.Msg == WmRestoreNoActivate)
-                {
-                    owner.RestoreWithoutActivation();
-                    return;
                 }
             }
 
