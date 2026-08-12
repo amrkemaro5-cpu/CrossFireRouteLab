@@ -26,6 +26,12 @@ public static class GameScanner
     [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
+    static readonly SemaphoreSlim ScanGate = new(1, 1);
+    static readonly TimeSpan CacheLifetime = TimeSpan.FromMilliseconds(900);
+    static readonly object CacheLock = new();
+    static List<GameEndpoint> cached = new();
+    static DateTime cachedAtUtc = DateTime.MinValue;
+
     static readonly HashSet<string> Ignore = new(StringComparer.OrdinalIgnoreCase)
     {
         "system", "idle", "svchost", "lsass", "services", "wininit", "spoolsv", "explorer", "dwm",
@@ -71,28 +77,82 @@ public static class GameScanner
 
     public static async Task<List<GameEndpoint>> DiscoverAsync()
     {
-        var foreground = GetForegroundPid();
-        var text = await RunAsync("netstat.exe", "-ano", 30000);
-        var cache = new Dictionary<int, (string Name, string Path, string Title)>();
-        var result = new List<GameEndpoint>();
-
-        // First enumerate the running processes. This is deliberately independent
-        // of netstat: CrossFire can start before its public socket is established,
-        // and some game builds briefly expose no socket while loading.
-        foreach (var process in Process.GetProcesses())
+        lock (CacheLock)
         {
-            try
-            {
-                if (!TryGetProcessInfo(process.Id, out var info)) continue;
-                if (GameProfileStore.IsBlocked(info.Name) || Ignore.Contains(info.Name)) continue;
-                var score = Confidence(info.Name, info.Path, info.Title, process.Id, foreground, "", 0, "NO_PUBLIC_SOCKET", false);
-                if (!IsStrongProcessCandidate(info.Name, info.Path, info.Title, process.Id, foreground, score)) continue;
-                result.Add(new GameEndpoint(info.Name, process.Id, "", "", 0, "PROCESS_RUNNING", true, Math.Max(score, IsCrossFire(info.Name) ? 75 : score), info.Path));
-            }
-            catch { }
-            finally { process.Dispose(); }
+            if (DateTime.UtcNow - cachedAtUtc < CacheLifetime)
+                return new List<GameEndpoint>(cached);
         }
 
+        await ScanGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            lock (CacheLock)
+            {
+                if (DateTime.UtcNow - cachedAtUtc < CacheLifetime)
+                    return new List<GameEndpoint>(cached);
+            }
+
+            // Process enumeration, MainModule access, regex parsing and netstat are
+            // all moved away from the WinForms UI thread. Await alone is not enough
+            // for synchronous CPU/process work; Task.Run is intentional here.
+            var result = await Task.Run(ScanCoreAsync).ConfigureAwait(false);
+            lock (CacheLock)
+            {
+                cached = result;
+                cachedAtUtc = DateTime.UtcNow;
+                return new List<GameEndpoint>(cached);
+            }
+        }
+        finally
+        {
+            ScanGate.Release();
+        }
+    }
+
+    static async Task<List<GameEndpoint>> ScanCoreAsync()
+    {
+        var foreground = GetForegroundPid();
+        var text = await RunAsync("netstat.exe", "-ano", 7000).ConfigureAwait(false);
+        var result = new List<GameEndpoint>();
+        var infoCache = new Dictionary<int, (string Name, string Path, string Title)>();
+
+        // Fast process pass: only inspect executable path/title for processes that
+        // could plausibly be a game or the current foreground application. The old
+        // scanner opened MainModule for every process on every scan, which was one
+        // of the biggest sources of periodic UI stalls.
+        try
+        {
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    var name = process.ProcessName;
+                    if (GameProfileStore.IsBlocked(name) || Ignore.Contains(name)) continue;
+                    var lower = name.ToLowerInvariant();
+                    var known = GameWords.Any(w => lower.Contains(w, StringComparison.OrdinalIgnoreCase));
+                    var crossfire = IsCrossFire(name);
+                    var foregroundCandidate = process.Id == foreground;
+                    if (!known && !crossfire && !foregroundCandidate) continue;
+
+                    if (!TryGetProcessInfo(process.Id, out var info)) continue;
+                    infoCache[process.Id] = info;
+                    var score = Confidence(info.Name, info.Path, info.Title, process.Id, foreground, "", 0, "PROCESS_RUNNING", false);
+                    if (IsStrongProcessCandidate(info.Name, info.Path, info.Title, process.Id, foreground, score))
+                    {
+                        result.Add(new GameEndpoint(info.Name, process.Id, "", "", 0, "PROCESS_RUNNING", true,
+                            Math.Max(score, IsCrossFire(info.Name) ? 80 : score), info.Path));
+                    }
+                }
+                catch { }
+                finally { process.Dispose(); }
+            }
+        }
+        catch { }
+
+        // Parse netstat first and resolve each PID only once. The old implementation
+        // resolved process metadata once per socket line, which multiplied expensive
+        // MainModule calls on machines with many connections.
+        var rows = new List<(string Protocol, string Remote, int Pid, string State)>();
         foreach (var line in text.Replace('\r', '\n').Split('\n'))
         {
             var m = Regex.Match(line, @"^\s*(TCP|UDP)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s+(\d+)\s*$", RegexOptions.IgnoreCase);
@@ -100,17 +160,28 @@ public static class GameScanner
             var protocol = m.Groups[1].Value.ToUpperInvariant();
             var state = string.IsNullOrWhiteSpace(m.Groups[4].Value) ? "ACTIVE" : m.Groups[4].Value;
             if (protocol == "TCP" && !state.Equals("ESTABLISHED", StringComparison.OrdinalIgnoreCase)) continue;
-            var remote = m.Groups[3].Value;
+            rows.Add((protocol, m.Groups[3].Value, pid, state));
+        }
+
+        foreach (var row in rows.GroupBy(x => x.Pid).Select(g => g.First()))
+        {
+            if (infoCache.ContainsKey(row.Pid)) continue;
+            if (TryGetProcessInfo(row.Pid, out var info)) infoCache[row.Pid] = info;
+        }
+
+        foreach (var row in rows)
+        {
+            if (!infoCache.TryGetValue(row.Pid, out var info)) continue;
+            var remote = row.Remote;
             var colon = remote.LastIndexOf(':');
             var ip = colon > 0 ? remote[..colon].Trim('[', ']') : remote.Trim('[', ']');
             var port = colon > 0 && int.TryParse(remote[(colon + 1)..], out var parsedPort) ? parsedPort : 0;
-            if (!IPAddress.TryParse(ip, out var address) || address.AddressFamily != AddressFamily.InterNetwork || !IsPublic(ip)) continue;
-            if (port <= 0) continue;
-            if (!TryGetProcessInfo(pid, out var info)) continue;
-            cache[pid] = info;
-            var score = Confidence(info.Name, info.Path, info.Title, pid, foreground, protocol, port, state, true);
-            if (score < 30 || GameProfileStore.IsBlocked(info.Name)) continue;
-            result.Add(new GameEndpoint(info.Name, pid, protocol, ip, port, state, score >= 45, score, info.Path));
+            if (port <= 0 || !IPAddress.TryParse(ip, out var address) || address.AddressFamily != AddressFamily.InterNetwork || !IsPublic(ip)) continue;
+            if (GameProfileStore.IsBlocked(info.Name) || Ignore.Contains(info.Name)) continue;
+
+            var score = Confidence(info.Name, info.Path, info.Title, row.Pid, foreground, row.Protocol, port, row.State, true);
+            if (score < 30) continue;
+            result.Add(new GameEndpoint(info.Name, row.Pid, row.Protocol, ip, port, row.State, score >= 45, score, info.Path));
         }
 
         return result
@@ -238,6 +309,7 @@ public static class GameScanner
         if (b[0] == 10 || b[0] == 127 || (b[0] == 192 && b[1] == 168) || (b[0] == 169 && b[1] == 254)) return false;
         if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return false;
         if (b[0] == 100 && b[1] >= 64 && b[1] <= 127) return false;
+        if (b[0] >= 224) return false;
         return true;
     }
 
@@ -257,9 +329,9 @@ public static class GameScanner
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
             using var cancellation = new CancellationTokenSource(timeout);
-            try { await process.WaitForExitAsync(cancellation.Token); }
+            try { await process.WaitForExitAsync(cancellation.Token).ConfigureAwait(false); }
             catch { try { process.Kill(true); } catch { } }
-            return await output + "\n" + await error;
+            return await output.ConfigureAwait(false) + "\n" + await error.ConfigureAwait(false);
         }
         catch { return ""; }
     }
