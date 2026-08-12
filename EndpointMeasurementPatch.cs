@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reflection;
@@ -6,13 +7,11 @@ using System.Reflection;
 namespace CrossFireRouteLab;
 
 /// <summary>
-/// Fixes the most important measurement flaw in v10: ICMP latency to a game
-/// server is not necessarily the latency CrossFire reports. For an endpoint
-/// already opened by the game, the patch measures the transport that the game
-/// actually exposes (TCP connect RTT for TCP connections) and ranks every
-/// public candidate instead of blindly taking the first TCP row returned by
-/// netstat. It changes only GRL's measurement target; it never rewrites the
-/// game's server selection or invents a route that Windows does not have.
+/// Fixes the v10 measurement flaw: ICMP latency is not necessarily the latency
+/// CrossFire reports. For TCP endpoints already opened by the game, GRL measures
+/// TCP connect RTT and ranks every public candidate instead of taking the first
+/// netstat row. It changes only GRL's measurement target; it never rewrites the
+/// game's server selection or invents a route Windows does not have.
 /// </summary>
 internal static class EndpointMeasurementPatch
 {
@@ -80,8 +79,12 @@ internal static class EndpointMeasurementPatch
 
             if (ranked.Count == 0) return;
             var best = ranked.OrderBy(x => x.Median).ThenBy(x => x.Average).First();
-            var current = ranked.FirstOrDefault(x => x.C.Ip.Equals(lastTarget, StringComparison.OrdinalIgnoreCase));
-            if (current != null && current.Median <= best.Median + 2.0) best = current;
+            var hasCurrent = ranked.Any(x => $"{x.C.Ip}:{x.C.Port}".Equals(lastTarget, StringComparison.OrdinalIgnoreCase));
+            if (hasCurrent)
+            {
+                var current = ranked.First(x => $"{x.C.Ip}:{x.C.Port}".Equals(lastTarget, StringComparison.OrdinalIgnoreCase));
+                if (current.Median <= best.Median + 2.0) best = current;
+            }
 
             Publish(form, gameName, best, ranked);
         }
@@ -127,8 +130,9 @@ internal static class EndpointMeasurementPatch
                     quality.ForeColor = Color.FromArgb(40, 242, 122);
                 }
 
-                if (type.GetField("graph", flags)?.GetValue(form) is GraphPanel graph)
-                    graph.Values = new[] { best.Median };
+                var graph = type.GetField("graph", flags)?.GetValue(form);
+                var valuesProperty = graph?.GetType().GetProperty("Values", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                valuesProperty?.SetValue(graph, new[] { best.Median });
 
                 var changed = !string.Equals(lastTarget, $"{best.C.Ip}:{best.C.Port}", StringComparison.OrdinalIgnoreCase) || Math.Abs(lastScore - best.Median) >= 2;
                 lastTarget = $"{best.C.Ip}:{best.C.Port}";
