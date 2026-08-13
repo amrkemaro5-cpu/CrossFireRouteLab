@@ -26,9 +26,8 @@ internal static class Program
             GenericGameDetectionPatch.Apply(dashboard);
 
             // CrossFire's scoreboard is the ground-truth game latency.
-            // TCP remains the only transport used for network endpoint discovery
-            // and route analysis; the scoreboard reader does not inject traffic.
-            CrossFireGroundTruthPatch.Apply(dashboard);
+            // TCP remains the transport used for endpoint discovery and route analysis.
+            CrossFireScoreboardPingReader.Apply(dashboard);
             CrossFireUiGuard.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
