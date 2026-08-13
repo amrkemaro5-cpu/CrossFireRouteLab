@@ -25,11 +25,11 @@ internal static class Program
             AutoOptimizationPatch.Apply(dashboard);
             GenericGameDetectionPatch.Apply(dashboard);
 
-            // CrossFire has one dedicated coordinator. It discovers the complete
-            // CrossFire process family, tracks live TCP candidates, and separately
-            // benchmarks/apply-tests Windows routes. It does not claim a TCP probe
-            // is the game's displayed room ping.
-            CrossFireRouteEngine.Apply(dashboard);
+            // CrossFire TCP is intentionally simple: enumerate every established
+            // TCP socket owned by the CrossFire process family and read RTT from
+            // the existing socket. No UDP discovery, no control-port ranking,
+            // no endpoint history, and no synthetic TCP connect used as ping.
+            CrossFireTcpSimple.Apply(dashboard);
             CrossFireUiGuard.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
