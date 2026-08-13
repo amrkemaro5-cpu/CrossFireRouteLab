@@ -9,7 +9,7 @@ namespace CrossFireRouteLab;
 /// CrossFire TCP-only route optimizer.
 /// Every route benchmark opens a fresh TCP connection to the exact live
 /// CrossFire TCP endpoint supplied by CrossFireRoomTransportProbeV3.
-/// No ICMP/UDP proxy is used.
+/// No alternate transport or packet proxy is used.
 /// </summary>
 internal static class CrossFireRoomRouteOptimizerV2
 {
@@ -59,7 +59,7 @@ internal static class CrossFireRoomRouteOptimizerV2
         try
         {
             if (!protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase)) return;
-            Log(form, $"[ROUTE AI TCP] Benchmarking actual CrossFire TCP endpoint {ip}:{port}; no UDP/ICMP proxy.");
+            Log(form, $"[ROUTE AI TCP] Benchmarking actual CrossFire TCP endpoint {ip}:{port}; TCP connect measurement only.");
             var routes = await ReadDefaultRoutes();
             var candidates = routes.GroupBy(x => x.InterfaceIndex).Select(g => g.OrderBy(x => x.RouteMetric).First()).Where(x => x.Gateway.Length > 0 && x.InterfaceIndex > 0).ToList();
             if (candidates.Count <= 1)
