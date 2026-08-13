@@ -29,11 +29,11 @@ jobs:
           $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
           $src = $src.Replace('public RadarPanel() { DoubleBuffered = true; BackColor = Color.Transparent; }', 'public RadarPanel() { DoubleBuffered = true; BackColor = Color.FromArgb(3, 7, 17); }')
 
-          # Remove legacy UDP enumeration from the generic V10 form before compilation.
+          # Remove the old UDP branch from the generic V10 form before compilation.
           $src = [regex]::Replace($src, '(?s)\s*foreach \(var line in RunNetstat\("-ano -p udp"\)\)\s*\{.*?\n        \}', '')
 
-          # Make the generic V10 probe TCP-only as well. CrossFire itself is owned
-          # by CrossFireTcpRoomMonitor and never uses this generic probe path.
+          # Generic endpoint sampling is TCP connect only. CrossFire's actual
+          # game ping is read separately from the CrossFire scoreboard.
           $tcpProbe = @(
             '    double Probe(string ip, int port)',
             '    {',
@@ -59,41 +59,40 @@ jobs:
           Set-Content $path $src -Encoding UTF8
           Write-Host 'TCP-only V10 build normalization applied.'
 
-      - name: Verify repaired CrossFire TCP architecture
+      - name: Verify CrossFire scoreboard ground truth architecture
         shell: pwsh
         run: |
-          if (-not (Test-Path 'CrossFireTcpRoomMonitor.cs')) { throw 'Repaired CrossFire TCP room monitor is missing.' }
-
-          $tcp = Get-Content 'CrossFireTcpRoomMonitor.cs' -Raw
           $program = Get-Content 'Program.cs' -Raw
+          $reader = Get-Content 'CrossFireScoreboardPingReader.cs' -Raw
           $form = Get-Content 'GameRouteLabV10Form.cs' -Raw
 
-          foreach ($required in @('GetExtendedTcpTable','GetPerTcpConnectionEStats','SetPerTcpConnectionEStats','TCP_ESTATS_PATH','SampleRtt','SmoothedRtt','Channel TCP baseline locked','NEW ROOM TCP SESSION confirmed','ROOM TCP    NOT OBSERVED')) {
-            if (-not $tcp.Contains($required)) { throw "Repaired TCP monitor is missing: $required" }
+          if (-not $program.Contains('CrossFireScoreboardPingReader.Apply')) { throw 'Program.cs is not using the scoreboard ground-truth reader.' }
+          if ($program.Contains('CrossFireTcpRoomMonitor.Apply')) { throw 'Program.cs still invokes the obsolete room-TCP detector.' }
+          if ($program.Contains('CrossFireSessionTcp.Apply')) { throw 'Program.cs still invokes the superseded room observer.' }
+          if ($program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs still invokes the obsolete TCP selector.' }
+
+          foreach ($required in @('RecognizerSelfTest','FindGreenLines','Recognize','CROSSFIRE PING','SOURCE          SCOREBOARD')) {
+            if (-not $reader.Contains($required)) { throw "Scoreboard reader is missing: $required" }
           }
 
-          foreach ($forbidden in @('UdpClient','System.Net.Ping','new Ping()','SendPing','ConnectAsync','PktMon','RunNetstat("-ano -p udp")')) {
-            if ($tcp.Contains($forbidden)) { throw "Forbidden transport/probe leaked into repaired CrossFire TCP monitor: $forbidden" }
+          foreach ($forbidden in @('UdpClient','PktMon','RunNetstat("-ano -p udp")')) {
+            if ($reader.Contains($forbidden)) { throw "Forbidden UDP/packet code leaked into scoreboard reader: $forbidden" }
           }
 
           foreach ($forbiddenForm in @('-ano -p udp','new Ping()','"UDP"')) {
             if ($form.Contains($forbiddenForm)) { throw "TCP-only normalized form still contains legacy transport code: $forbiddenForm" }
           }
 
-          if (-not $program.Contains('CrossFireTcpRoomMonitor.Apply')) { throw 'Program.cs is not using the repaired CrossFire TCP monitor.' }
-          if ($program.Contains('CrossFireSessionTcp.Apply')) { throw 'Program.cs still invokes the superseded room observer.' }
-          if ($program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs still invokes the obsolete TCP selector.' }
-
           $csFiles = Get-ChildItem -Path . -Filter *.cs -Recurse | ForEach-Object { Get-Content $_.FullName -Raw }
           $joined = $csFiles -join "`n"
           if ($joined -match 'UdpClient|RunNetstat\("-ano -p udp"\)') { throw 'UDP socket/probe code remains in the compiled C# source set.' }
 
-          Write-Host 'Repaired CrossFire TCP architecture verification passed.'
+          Write-Host 'CrossFire scoreboard ground-truth architecture verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
 
-      - name: Startup and layout smoke test
+      - name: Startup, layout, and digit-reader smoke test
         shell: pwsh
         run: |
           $testDir = Join-Path $env:RUNNER_TEMP 'grl-startup-smoke'
@@ -118,6 +117,7 @@ jobs:
           static class Smoke {
             static IEnumerable<Control> All(Control root) { foreach (Control c in root.Controls) { yield return c; foreach (var x in All(c)) yield return x; } }
             [STAThread] static void Main() {
+              if (!CrossFireScoreboardPingReader.RecognizerSelfTest()) throw new Exception("CrossFire scoreboard digit recognizer self-test failed.");
               ApplicationConfiguration.Initialize();
               using var form = new GameRouteLabV10Form();
               form.CreateControl(); form.PerformLayout(); form.Show(); Application.DoEvents();
@@ -128,7 +128,7 @@ jobs:
               if (!controls.OfType<Label>().Any(x => x.Text == "LIVE ANALYSIS CONSOLE")) throw new Exception("Console missing.");
               if (!controls.OfType<Button>().Any(x => x.Text == "AUTO ANALYZE")) throw new Exception("Auto Analyze missing.");
               if (controls.Count(x => x is Button b && b.Text == "ADD GAME EXE") != 1) throw new Exception("Add Game EXE must appear exactly once.");
-              Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}");
+              Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}; digit-reader=OK");
               form.Close();
             }
           }
