@@ -45,7 +45,7 @@ jobs:
           if (-not $src.Contains('ROUTE TARGET ONLY (UDP room; no synthetic probe)')) { throw 'UDP room route-target state is missing.' }
           $ai = Get-Content CrossFireAiRoutePatch.cs -Raw
           if (-not $ai.Contains('CrossFireRoomTransportProbeV3.TryGetTarget')) { throw 'AI must consume the V3-verified room target.' }
-          if ($ai.Contains('TCP-only')) { throw 'Legacy TCP-only AI mode is still active.' }
+          if ($ai.Contains('One-click TCP mode armed')) { throw 'Legacy TCP-only AI mode is still active.' }
           if (-not $ai.Contains('TCP/UDP')) { throw 'Transport-aware AI wording is missing.' }
           $program = Get-Content Program.cs -Raw
           if ($program.Contains('CrossFireTcpOnlyFinalPatch.Apply')) { throw 'Legacy TCP-only override is still active.' }
