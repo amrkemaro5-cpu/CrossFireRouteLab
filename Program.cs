@@ -25,13 +25,9 @@ internal static class Program
             AutoOptimizationPatch.Apply(dashboard);
             GenericGameDetectionPatch.Apply(dashboard);
 
-            // CrossFire is deliberately TCP-only in this build.
-            // The TCP layer discovers the live CrossFire socket and measures
-            // TCP connection/handshake latency against that exact endpoint.
+            // CrossFire has one route path only: live TCP socket -> TCP measurement -> route optimizer.
             CrossFireTcpOnlyFinalPatch.Apply(dashboard);
-            CrossFireAiRoutePatch.Apply(dashboard);
             CrossFireRoomRouteOptimizerV2.Apply(dashboard);
-            FinalAiRoutePatch.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
             Application.Run(dashboard);
