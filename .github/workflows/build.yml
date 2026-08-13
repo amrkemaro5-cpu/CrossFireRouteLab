@@ -28,12 +28,7 @@ jobs:
           $src = $src.Replace('static readonly Color Text =', 'new static readonly Color Text =')
           $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
           $src = $src.Replace('public RadarPanel() { DoubleBuffered = true; BackColor = Color.Transparent; }', 'public RadarPanel() { DoubleBuffered = true; BackColor = Color.FromArgb(3, 7, 17); }')
-
-          # Remove the old UDP branch from the generic V10 form before compilation.
           $src = [regex]::Replace($src, '(?s)\s*foreach \(var line in RunNetstat\("-ano -p udp"\)\)\s*\{.*?\n        \}', '')
-
-          # Generic endpoint sampling is TCP connect only. CrossFire's actual
-          # game ping is read separately from the CrossFire scoreboard.
           $tcpProbe = @(
             '    double Probe(string ip, int port)',
             '    {',
@@ -57,7 +52,34 @@ jobs:
           ) -join "`r`n"
           $src = [regex]::Replace($src, '(?s)\s*double Probe\(string ip, int port\)\s*\{.*?\n    \}', "`r`n$tcpProbe")
           Set-Content $path $src -Encoding UTF8
-          Write-Host 'TCP-only V10 build normalization applied.'
+
+      - name: Normalize optimizer to TCP-only endpoint evidence
+        shell: pwsh
+        run: |
+          $path = 'AutoOptimizationPatch.cs'
+          $src = Get-Content $path -Raw
+          $tcpProbe = @(
+            '    static double Probe(string ip, int port)',
+            '    {',
+            '        if (port <= 0 || port >= 65536) return -1;',
+            '        try',
+            '        {',
+            '            var sw = Stopwatch.StartNew();',
+            '            using var client = new System.Net.Sockets.TcpClient { NoDelay = true };',
+            '            var task = client.ConnectAsync(ip, port);',
+            '            if (task.Wait(850) && client.Connected)',
+            '            {',
+            '                sw.Stop();',
+            '                return sw.Elapsed.TotalMilliseconds;',
+            '            }',
+            '        }',
+            '        catch { }',
+            '        return -1;',
+            '    }'
+          ) -join "`r`n"
+          $src = [regex]::Replace($src, '(?s)\s*static double Probe\(string ip, int port\)\s*\{.*?\n    \}', "`r`n$tcpProbe")
+          Set-Content $path $src -Encoding UTF8
+          Write-Host 'Optimizer endpoint evidence normalized to TCP connect only.'
 
       - name: Verify CrossFire scoreboard ground truth architecture
         shell: pwsh
@@ -65,6 +87,7 @@ jobs:
           $program = Get-Content 'Program.cs' -Raw
           $reader = Get-Content 'CrossFireScoreboardPingReader.cs' -Raw
           $form = Get-Content 'GameRouteLabV10Form.cs' -Raw
+          $ai = Get-Content 'AutoOptimizationPatch.cs' -Raw
 
           if (-not $program.Contains('CrossFireScoreboardPingReader.Apply')) { throw 'Program.cs is not using the scoreboard ground-truth reader.' }
           if ($program.Contains('CrossFireTcpRoomMonitor.Apply')) { throw 'Program.cs still invokes the obsolete room-TCP detector.' }
@@ -75,13 +98,16 @@ jobs:
             if (-not $reader.Contains($required)) { throw "Scoreboard reader is missing: $required" }
           }
 
-          foreach ($forbidden in @('UdpClient','PktMon','RunNetstat("-ano -p udp")')) {
-            if ($reader.Contains($forbidden)) { throw "Forbidden UDP/packet code leaked into scoreboard reader: $forbidden" }
+          foreach ($forbidden in @('UdpClient','PktMon','RunNetstat("-ano -p udp")','new Ping()','SendPing')) {
+            if ($reader.Contains($forbidden)) { throw "Forbidden probe code leaked into scoreboard reader: $forbidden" }
           }
 
           foreach ($forbiddenForm in @('-ano -p udp','new Ping()','"UDP"')) {
             if ($form.Contains($forbiddenForm)) { throw "TCP-only normalized form still contains legacy transport code: $forbiddenForm" }
           }
+
+          if ($ai.Contains('new Ping()') -or $ai.Contains('SendPing')) { throw 'TCP-only optimizer still contains ICMP Ping code.' }
+          if (-not $ai.Contains('static double Probe(string ip, int port)')) { throw 'TCP-only optimizer Probe method is missing.' }
 
           $csFiles = Get-ChildItem -Path . -Filter *.cs -Recurse | ForEach-Object { Get-Content $_.FullName -Raw }
           $joined = $csFiles -join "`n"
@@ -128,7 +154,7 @@ jobs:
               if (!controls.OfType<Label>().Any(x => x.Text == "LIVE ANALYSIS CONSOLE")) throw new Exception("Console missing.");
               if (!controls.OfType<Button>().Any(x => x.Text == "AUTO ANALYZE")) throw new Exception("Auto Analyze missing.");
               if (controls.Count(x => x is Button b && b.Text == "ADD GAME EXE") != 1) throw new Exception("Add Game EXE must appear exactly once.");
-              Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}; digit-reader=OK");
+              Console.WriteLine($"V10 SMOKE OK: {form.ClientSize.Width}x{form.ClientSize.Height}; controls={controls.Count}; digit-reader=OK; optimizer=TCP-only");
               form.Close();
             }
           }
