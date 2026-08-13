@@ -9,9 +9,11 @@ namespace CrossFireRouteLab;
 /// CrossFire room-aware TCP observer.
 /// It never creates a probe socket and never uses UDP. It first captures the
 /// TCP endpoints already present in the channel, then watches for a NEW
-/// established TCP endpoint after the session changes. Only a persistent new
-/// TCP endpoint is offered to the route optimizer. If the room adds no TCP
-/// endpoint, the UI explicitly says that the room ping is not TCP-exposed.
+/// established TCP session after the session changes. A new connection to the
+/// same remote server is still detected because the local TCP port is part of
+/// the session identity. Only a persistent new TCP session is offered to the
+/// route optimizer. If the room adds no TCP session, the UI explicitly says
+/// that the room ping is not TCP-exposed.
 /// </summary>
 internal static class CrossFireSessionTcp
 {
@@ -25,7 +27,7 @@ internal static class CrossFireSessionTcp
     private static System.Threading.Timer? _timer;
     private static int _scan;
     private static bool _baselineReady;
-    private static HashSet<string> _channelEndpoints = new(StringComparer.OrdinalIgnoreCase);
+    private static HashSet<string> _channelSessions = new(StringComparer.OrdinalIgnoreCase);
     private static string _candidateKey = "";
     private static int _candidateStreak;
     private static string _activeCandidate = "";
@@ -34,7 +36,7 @@ internal static class CrossFireSessionTcp
     {
         _timer?.Dispose();
         _baselineReady = false;
-        _channelEndpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _channelSessions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _candidateKey = "";
         _candidateStreak = 0;
         _activeCandidate = "";
@@ -55,7 +57,7 @@ internal static class CrossFireSessionTcp
                 if (process == null)
                 {
                     _baselineReady = false;
-                    _channelEndpoints.Clear();
+                    _channelSessions.Clear();
                     _candidateKey = "";
                     _candidateStreak = 0;
                     SetEndpoint(form, null, 0);
@@ -76,15 +78,15 @@ internal static class CrossFireSessionTcp
                 if (!_baselineReady)
                 {
                     if (currentKeys.Count == 0) return;
-                    _channelEndpoints = currentKeys;
+                    _channelSessions = currentKeys;
                     _baselineReady = true;
                     Publish(form, sockets, Array.Empty<TcpSocket>(), false);
-                    Write(form, $"[CROSSFIRE TCP] Channel baseline captured: {currentKeys.Count} established TCP endpoint(s). Enter a room now; a NEW TCP endpoint will be tested if CrossFire exposes one.");
+                    Write(form, $"[CROSSFIRE TCP] Channel baseline captured: {currentKeys.Count} established TCP session(s). Enter a room now; a NEW TCP session will be tested if CrossFire exposes one.");
                     return;
                 }
 
                 var candidates = sockets
-                    .Where(x => !IsWebEndpoint(x.Port) && !_channelEndpoints.Contains(Key(x)))
+                    .Where(x => !IsWebEndpoint(x.Port) && !_channelSessions.Contains(Key(x)))
                     .ToList();
 
                 if (candidates.Count == 0)
@@ -182,8 +184,14 @@ internal static class CrossFireSessionTcp
     {
         var rows = GetTcpRows();
         return rows.Where(x => x.DwState == TCP_STATE_ESTABLISHED && pids.Contains((int)x.DwOwningPid))
-            .Select(x => new TcpSocket(new IPAddress(x.DwRemoteAddr).ToString(), NetworkToHostPort(x.DwRemotePort), (int)x.DwOwningPid, x, -1))
-            .Where(x => IsPublicIPv4(x.Ip) && x.Port > 0)
+            .Select(x => new TcpSocket(
+                new IPAddress(x.DwRemoteAddr).ToString(),
+                NetworkToHostPort(x.DwRemotePort),
+                NetworkToHostPort(x.DwLocalPort),
+                (int)x.DwOwningPid,
+                x,
+                -1))
+            .Where(x => IsPublicIPv4(x.Ip) && x.Port > 0 && x.LocalPort > 0)
             .GroupBy(Key, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
             .OrderBy(x => x.Ip, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Port).Take(30).ToList();
     }
@@ -242,10 +250,10 @@ internal static class CrossFireSessionTcp
                 if (text != null)
                 {
                     var lines = new List<string>();
-                    foreach (var x in all.Take(10)) lines.Add($"TCP  {x.Ip}:{x.Port}  ESTABLISHED");
+                    foreach (var x in all.Take(10)) lines.Add($"TCP  {x.Ip}:{x.Port}  ESTABLISHED  RTT {(x.RttMs >= 0 ? $"{x.RttMs:0.0} ms" : "—")}");
                     if (candidates.Count > 0)
-                        lines.AddRange(candidates.Select(x => $"ROOM TCP CANDIDATE  {x.Ip}:{x.Port}  {(x.RttMs >= 0 ? $"RTT {x.RttMs:0.0} ms" : "RTT unavailable")}"));
-                    text.Text = lines.Count == 0 ? "No established CrossFire TCP sockets found." : string.Join("\r\n", lines);
+                        lines.AddRange(candidates.Select(x => $"ROOM TCP CANDIDATE  {x.Ip}:{x.Port}  RTT {(x.RttMs >= 0 ? $"{x.RttMs:0.0} ms" : "unavailable")}"));
+                    text.Text = lines.Count == 0 ? "No established CrossFire TCP sessions found." : string.Join("\r\n", lines);
                 }
                 var metrics = type.GetField("metrics", flags)?.GetValue(form) as Label;
                 if (metrics != null)
@@ -299,7 +307,7 @@ internal static class CrossFireSessionTcp
         catch { }
     }
 
-    private static string Key(TcpSocket x) => $"{x.Ip}:{x.Port}";
+    private static string Key(TcpSocket x) => $"{x.Ip}:{x.Port}|LOCAL:{x.LocalPort}";
     private static bool IsWebEndpoint(int port) => port is 80 or 443;
     private static void SetField(Form form, string name, object value) => form.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(form, value);
     private static void Write(Form form, string message)
@@ -325,7 +333,7 @@ internal static class CrossFireSessionTcp
 
     private static int NetworkToHostPort(uint value) => (int)IPAddress.NetworkToHostOrder(unchecked((short)value)) & 0xFFFF;
     private static bool IsPublicIPv4(string ip) => IPAddress.TryParse(ip, out var address) && address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.Any);
-    private sealed record TcpSocket(string Ip, int Port, int Pid, MibTcpRowOwnerPid Row, double RttMs)
+    private sealed record TcpSocket(string Ip, int Port, int LocalPort, int Pid, MibTcpRowOwnerPid Row, double RttMs)
     {
         public string State => "ESTABLISHED";
     }
