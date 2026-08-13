@@ -25,12 +25,10 @@ internal static class Program
             AutoOptimizationPatch.Apply(dashboard);
             GenericGameDetectionPatch.Apply(dashboard);
 
-            // CrossFire owns its own TCP-only measurement path. It never uses
-            // UDP, ICMP, a synthetic TCP connection, or lowest-RTT web selection.
-            // The monitor keeps the channel TCP RTT visible and only labels a
-            // room TCP endpoint after a genuinely new established TCP session
-            // survives several consecutive scans.
-            CrossFireTcpRoomMonitor.Apply(dashboard);
+            // CrossFire's scoreboard is the ground-truth game latency.
+            // TCP remains the only transport used for network endpoint discovery
+            // and route analysis; the scoreboard reader does not inject traffic.
+            CrossFireGroundTruthPatch.Apply(dashboard);
             CrossFireUiGuard.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
