@@ -7,7 +7,6 @@ namespace CrossFireRouteLab;
 /// <summary>
 /// CrossFire TCP-only AI route decision layer.
 /// The only accepted target is the live TCP endpoint exposed by the TCP probe.
-/// UDP is not a supported transport in the decision path.
 /// </summary>
 internal static class CrossFireAiRoutePatch
 {
@@ -81,7 +80,7 @@ internal static class CrossFireAiRoutePatch
             return;
         }
 
-        Log(form, $"[AI ROUTE ENGINE] TCP target locked to {ip}:{port} from the live CrossFire socket. No UDP target is accepted.");
+        Log(form, $"[AI ROUTE ENGINE] TCP target locked to {ip}:{port} from the live CrossFire socket. Only TCP targets are accepted.");
         var task = optimize.Invoke(null, new object[] { form, ip, port, "TCP" }) as Task;
         if (task != null) await task.ConfigureAwait(true);
         Log(form, $"[AI ROUTE ENGINE] TCP route optimization complete for {ip}:{port}.");
@@ -99,7 +98,7 @@ internal static class CrossFireAiRoutePatch
             if (type.GetField("endpointBox", flags)?.GetValue(form) is TextBox box) box.Text = $"{ip}:{port}";
             if (type.GetField("metrics", flags)?.GetValue(form) is Label metrics)
             {
-                metrics.Text = $"ENDPOINT   {ip}:{port}\r\nPROTOCOL   TCP\r\nSOURCE     LIVE CROSSFIRE TCP SOCKET\r\nSTATUS     ACTUAL TCP TARGET\r\nUDP        REMOVED";
+                metrics.Text = $"ENDPOINT   {ip}:{port}\r\nPROTOCOL   TCP\r\nSOURCE     LIVE CROSSFIRE TCP SOCKET\r\nSTATUS     ACTUAL TCP TARGET\r\nTRANSPORT  TCP ONLY";
             }
             if (type.GetField("quality", flags)?.GetValue(form) is Label quality)
             {
