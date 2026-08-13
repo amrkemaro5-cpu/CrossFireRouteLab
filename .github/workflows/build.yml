@@ -20,10 +20,7 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore
-        run: dotnet restore CrossFireRouteLab.csproj
-
-      - name: Normalize known V10 source compatibility issues
+      - name: Normalize V10 source to the TCP-only build contract
         shell: pwsh
         run: |
           $path = 'GameRouteLabV10Form.cs'
@@ -31,10 +28,40 @@ jobs:
           $src = $src.Replace('static readonly Color Text =', 'new static readonly Color Text =')
           $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
           $src = $src.Replace('public RadarPanel() { DoubleBuffered = true; BackColor = Color.Transparent; }', 'public RadarPanel() { DoubleBuffered = true; BackColor = Color.FromArgb(3, 7, 17); }')
-          Set-Content $path $src -Encoding UTF8
-          Write-Host 'V10 source compatibility normalization applied.'
 
-      - name: Verify room-aware TCP architecture
+          # Remove the legacy UDP connection enumeration from the generic V10 form.
+          $src = [regex]::Replace($src, '(?s)\s*foreach \(var line in RunNetstat\("-ano -p udp"\)\)\s*\{.*?\n        \}', '')
+
+          # Make the generic V10 probe TCP-only as well. This is deliberately a
+          # connection-time probe for generic path testing; CrossFire room RTT
+          # comes only from an existing TCP session in CrossFireSessionTcp.
+          $tcpProbe = @'
+    double Probe(string ip, int port)
+    {
+        if (port > 0 && port < 65536)
+        {
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                using var client = new TcpClient { NoDelay = true };
+                var task = client.ConnectAsync(ip, port);
+                if (task.Wait(850) && client.Connected)
+                {
+                    sw.Stop();
+                    return sw.Elapsed.TotalMilliseconds;
+                }
+            }
+            catch { }
+        }
+        return -1;
+    }
+'@
+          $src = [regex]::Replace($src, '(?s)\s*double Probe\(string ip, int port\)\s*\{.*?\n    \}', "`r`n$tcpProbe")
+          Set-Content $path $src -Encoding UTF8
+
+          Write-Host 'TCP-only V10 build normalization applied.'
+
+      - name: Verify room-aware TCP architecture and no UDP probes
         shell: pwsh
         run: |
           if (-not (Test-Path 'CrossFireSessionTcp.cs')) { throw 'Room-aware TCP observer is missing.' }
@@ -42,6 +69,7 @@ jobs:
           if (Test-Path 'CrossFireRouteEngine.cs') { throw 'Obsolete complex CrossFire route engine still exists.' }
 
           $tcp = Get-Content 'CrossFireSessionTcp.cs' -Raw
+          $form = Get-Content 'GameRouteLabV10Form.cs' -Raw
           $program = Get-Content 'Program.cs' -Raw
 
           foreach ($required in @('GetExtendedTcpTable','GetPerTcpConnectionEStats','SetPerTcpConnectionEStats','MeasureExistingTcpRtt','Channel baseline captured','NEW SESSION TCP candidate','ROOM TCP   NOT EXPOSED')) {
@@ -52,11 +80,18 @@ jobs:
             if ($tcp.Contains($forbidden)) { throw "Forbidden/legacy probe logic leaked into the room-aware TCP observer: $forbidden" }
           }
 
+          foreach ($forbiddenForm in @('-ano -p udp','new Ping()','"UDP"')) {
+            if ($form.Contains($forbiddenForm)) { throw "TCP-only build still contains legacy network probe code: $forbiddenForm" }
+          }
+
+          $csFiles = Get-ChildItem -Path . -Filter *.cs -Recurse | ForEach-Object { Get-Content $_.FullName -Raw }
+          if (($csFiles -join "`n") -match 'UdpClient|RunNetstat\("-ano -p udp"\)') { throw 'UDP socket/probe code remains in the compiled C# source set.' }
+
           if (-not $program.Contains('CrossFireSessionTcp.Apply')) { throw 'Program.cs is not using the room-aware TCP observer.' }
           if ($program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs still references the removed TCP selector.' }
           if ($program.Contains('CrossFireRouteEngine.Apply')) { throw 'Program.cs still references the obsolete route engine.' }
 
-          Write-Host 'Room-aware TCP architecture verification passed.'
+          Write-Host 'Room-aware TCP + TCP-only source verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
