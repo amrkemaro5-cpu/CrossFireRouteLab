@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Windows.Forms;
 
@@ -7,61 +8,89 @@ namespace CrossFireRouteLab;
 
 /// <summary>
 /// Single CrossFire route entry point.
-/// CrossFire is handled through one live TCP socket detector and the TCP route optimizer.
-/// The generic V10 connection/ping timers are disabled while CrossFire is selected so they
-/// cannot replace the CrossFire target or measurement.
+/// CrossFire uses one live TCP socket detector and one TCP route optimizer.
+/// The generic V10 connection and ping paths are isolated whenever CrossFire is running.
 /// </summary>
 internal static class CrossFireTcpOnlyFinalPatch
 {
     static bool armed;
-    static Delegate? originalAutoAnalyzeClick;
+    static System.Threading.Timer? guardTimer;
+    static readonly Dictionary<string, Delegate?> originalHandlers = new(StringComparer.OrdinalIgnoreCase);
 
     public static void Apply(GameRouteLabV10Form form)
     {
         if (armed || form.IsDisposed) return;
         armed = true;
         CrossFireRoomTransportProbeV3.Apply(form);
-        InstallCrossFireAutoAnalyze(form);
+        InstallButtonGuards(form);
+        guardTimer = new System.Threading.Timer(_ => GuardTick(form), null, 0, 500);
+        form.FormClosed += (_, _) => { try { guardTimer?.Dispose(); } catch { } guardTimer = null; };
         Log(form, "[CROSSFIRE TCP] Single TCP route path armed: live socket -> TCP measurement -> route optimizer.");
     }
 
-    static void InstallCrossFireAutoAnalyze(GameRouteLabV10Form form)
+    static void GuardTick(GameRouteLabV10Form form)
     {
-        var button = FindButton(form, "AUTO ANALYZE");
-        if (button == null)
-        {
-            Log(form, "[CROSSFIRE TCP] AUTO ANALYZE button was not found; live TCP detection remains available.");
-            return;
-        }
+        if (form.IsDisposed) return;
+        using var process = FindCrossFireProcess();
+        if (process == null) return;
+        StopGenericTimers(form);
+        SetField(form, "gamePid", process.Id);
+        SetField(form, "gameName", process.ProcessName);
+    }
 
+    static void InstallButtonGuards(GameRouteLabV10Form form)
+    {
+        InstallGuard(form, "AUTO ANALYZE", async (button, e) =>
+        {
+            if (IsCrossFireRunning(form)) await AnalyzeCrossFire(form);
+            else await InvokeOriginalAsync("AUTO ANALYZE", button, e);
+        });
+
+        InstallGuard(form, "FIND CONNECTIONS", async (button, e) =>
+        {
+            if (IsCrossFireRunning(form)) await RefreshCrossFireTarget(form);
+            else await InvokeOriginalAsync("FIND CONNECTIONS", button, e);
+        });
+
+        InstallGuard(form, "PING 30x", async (button, e) =>
+        {
+            if (IsCrossFireRunning(form)) await MeasureCrossFire(form, 30);
+            else await InvokeOriginalAsync("PING 30x", button, e);
+        });
+
+        InstallGuard(form, "PATH QUALITY", async (button, e) =>
+        {
+            if (IsCrossFireRunning(form)) await MeasureCrossFire(form, 8);
+            else await InvokeOriginalAsync("PATH QUALITY", button, e);
+        });
+    }
+
+    static void InstallGuard(GameRouteLabV10Form form, string text, Func<Button, EventArgs, Task> replacement)
+    {
+        var button = FindButton(form, text);
+        if (button == null) return;
         try
         {
             var eventsProperty = typeof(Component).GetProperty("Events", BindingFlags.Instance | BindingFlags.NonPublic);
             var eventList = eventsProperty?.GetValue(button) as EventHandlerList;
             var clickKey = typeof(Control).GetField("EventClick", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
-            if (eventList != null && clickKey != null)
+            if (eventList == null || clickKey == null) return;
+            originalHandlers[text] = eventList[clickKey];
+            eventList[clickKey] = null;
+            button.Click += async (_, e) =>
             {
-                originalAutoAnalyzeClick = eventList[clickKey];
-                eventList[clickKey] = null;
-            }
+                try { await replacement(button, e); }
+                catch (Exception ex) { Log(form, $"[{text}] {ex.Message}"); }
+            };
         }
-        catch (Exception ex)
-        {
-            Log(form, "[CROSSFIRE TCP] Could not isolate the generic AUTO ANALYZE handler: " + ex.Message);
-            return;
-        }
+        catch (Exception ex) { Log(form, $"[CROSSFIRE TCP] Could not isolate {text}: {ex.Message}"); }
+    }
 
-        button.Click += async (_, e) =>
-        {
-            if (!IsCrossFireRunning(form))
-            {
-                try { originalAutoAnalyzeClick?.DynamicInvoke(button, e); }
-                catch (Exception ex) { Log(form, "[AUTO ANALYZE] " + ex.Message); }
-                return;
-            }
-
-            await AnalyzeCrossFire(form);
-        };
+    static async Task InvokeOriginalAsync(string name, Button button, EventArgs e)
+    {
+        if (originalHandlers.TryGetValue(name, out var handler) && handler != null)
+            handler.DynamicInvoke(button, e);
+        await Task.CompletedTask;
     }
 
     static async Task AnalyzeCrossFire(GameRouteLabV10Form form)
@@ -82,31 +111,37 @@ internal static class CrossFireTcpOnlyFinalPatch
             SetField(form, "endpointPort", 0);
             SetField(form, "lastPing", -1d);
             SetField(form, "jitter", 0d);
-            SetLabel(form, "gameTitle", PrettyName(process.ProcessName));
+            SetLabel(form, "gameTitle", "CrossFire");
             SetLabel(form, "gameMeta", $"PID       {process.Id}\r\nPATH      CrossFire process\r\nTRANSPORT TCP ONLY");
             SetTextBox(form, "endpointBox", "");
             SetLabel(form, "quality", "● CROSSFIRE TCP • WAITING FOR LIVE SOCKET", Color.FromArgb(40, 242, 122));
             SetLabel(form, "metrics", "ENDPOINT   —\r\nPROTOCOL   TCP\r\nSOURCE     LIVE CROSSFIRE TCP SOCKET\r\nSTATUS     WAITING");
 
             Log(form, "[CROSSFIRE TCP] Active match detection started. Waiting for a public TCP socket owned by CrossFire.");
-            for (var i = 0; i < 48 && !form.IsDisposed; i++)
-            {
-                if (CrossFireRoomTransportProbeV3.TryGetTarget(out var ip, out var port, out var protocol) &&
-                    protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase))
-                {
-                    PublishTarget(form, ip, port);
-                    await RunOptimizer(form, ip, port);
-                    return;
-                }
-                await Task.Delay(500).ConfigureAwait(true);
-            }
-
-            Log(form, "[CROSSFIRE TCP] No live public TCP endpoint was observed. Stay inside the active match and run AUTO ANALYZE again.");
+            await RefreshCrossFireTarget(form);
+            if (CrossFireRoomTransportProbeV3.TryGetTarget(out var ip, out var port, out var protocol) && protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase))
+                await RunOptimizer(form, ip, port);
         }
         finally
         {
             process.Dispose();
         }
+    }
+
+    static async Task RefreshCrossFireTarget(GameRouteLabV10Form form)
+    {
+        StopGenericTimers(form);
+        for (var i = 0; i < 48 && !form.IsDisposed; i++)
+        {
+            if (CrossFireRoomTransportProbeV3.TryGetTarget(out var ip, out var port, out var protocol) &&
+                protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase))
+            {
+                PublishTarget(form, ip, port);
+                return;
+            }
+            await Task.Delay(500).ConfigureAwait(true);
+        }
+        Log(form, "[CROSSFIRE TCP] No live public TCP endpoint was observed. Stay inside the active match and retry.");
     }
 
     static async Task RunOptimizer(GameRouteLabV10Form form, string ip, int port)
@@ -119,13 +154,62 @@ internal static class CrossFireTcpOnlyFinalPatch
             return;
         }
 
-        // Prevent the optimizer's background timer from starting the same target a second time.
         type.GetField("lastTarget", BindingFlags.Static | BindingFlags.NonPublic)?.SetValue(null, $"{ip}:{port}/TCP");
         type.GetField("lastRun", BindingFlags.Static | BindingFlags.NonPublic)?.SetValue(null, DateTime.UtcNow);
-
         Log(form, $"[CROSSFIRE TCP] Live target locked to {ip}:{port}. Starting TCP-only route optimization.");
         if (optimize.Invoke(null, new object[] { form, ip, port, "TCP" }) is Task task)
             await task.ConfigureAwait(true);
+    }
+
+    static async Task MeasureCrossFire(GameRouteLabV10Form form, int count)
+    {
+        StopGenericTimers(form);
+        if (!CrossFireRoomTransportProbeV3.TryGetTarget(out var ip, out var port, out var protocol) || !protocol.Equals("TCP", StringComparison.OrdinalIgnoreCase))
+        {
+            Log(form, "[CROSSFIRE TCP] No live TCP target is available yet.");
+            return;
+        }
+
+        var values = await TcpSamples(ip, port, count);
+        if (values.Count == 0)
+        {
+            Log(form, $"[CROSSFIRE TCP] {count} TCP samples: no successful connections.");
+            return;
+        }
+
+        var ordered = values.OrderBy(x => x).ToList();
+        var median = ordered[ordered.Count / 2];
+        var min = ordered[0];
+        var max = ordered[^1];
+        var average = ordered.Average();
+        var jitter = Math.Sqrt(ordered.Sum(x => Math.Pow(x - average, 2)) / ordered.Count);
+        SetField(form, "lastPing", median);
+        SetField(form, "jitter", jitter);
+        SetLabel(form, "metrics", $"ENDPOINT   {ip}:{port}\r\nPROTOCOL   TCP\r\nTCP RTT    {median:0.0} ms\r\nSAMPLES    {values.Count}/{count}\r\nMIN/MAX   {min:0.0} / {max:0.0} ms\r\nJITTER     {jitter:0.0} ms\r\nSOURCE     LIVE CROSSFIRE TCP SOCKET");
+        SetLabel(form, "quality", $"● CROSSFIRE TCP • {median:0} ms • {values.Count}/{count} samples", Color.FromArgb(40, 242, 122));
+        Log(form, $"[CROSSFIRE TCP] {count} fresh TCP samples to {ip}:{port}: median {median:0.0} ms, min {min:0.0}, max {max:0.0}, jitter {jitter:0.0}.");
+    }
+
+    static async Task<List<double>> TcpSamples(string ip, int port, int count)
+    {
+        var values = new List<double>();
+        for (var i = 0; i < count; i++)
+        {
+            try
+            {
+                using var client = new TcpClient { NoDelay = true };
+                var sw = Stopwatch.StartNew();
+                var task = client.ConnectAsync(ip, port);
+                if (await Task.WhenAny(task, Task.Delay(1400)).ConfigureAwait(false) == task && client.Connected)
+                {
+                    sw.Stop();
+                    values.Add(sw.Elapsed.TotalMilliseconds);
+                }
+            }
+            catch { }
+            await Task.Delay(80).ConfigureAwait(false);
+        }
+        return values;
     }
 
     static void StopGenericTimers(GameRouteLabV10Form form)
@@ -204,8 +288,6 @@ internal static class CrossFireTcpOnlyFinalPatch
         }
         catch { }
     }
-
-    static string PrettyName(string processName) => processName.Contains("crossfire", StringComparison.OrdinalIgnoreCase) ? "CrossFire" : processName;
 
     static void Log(GameRouteLabV10Form form, string text)
     {
