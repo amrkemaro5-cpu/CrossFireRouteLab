@@ -25,12 +25,12 @@ internal static class Program
             AutoOptimizationPatch.Apply(dashboard);
             GenericGameDetectionPatch.Apply(dashboard);
 
-            // CrossFire is handled separately from generic game endpoint selection.
-            // The observer captures the channel TCP baseline first and only exposes
-            // a persistent NEW TCP session after the channel state changes. It never
-            // uses UDP, never creates a synthetic TCP ping, and never selects the
-            // fastest web/control socket as the game target.
-            CrossFireSessionTcp.Apply(dashboard);
+            // CrossFire owns its own TCP-only measurement path. It never uses
+            // UDP, ICMP, a synthetic TCP connection, or lowest-RTT web selection.
+            // The monitor keeps the channel TCP RTT visible and only labels a
+            // room TCP endpoint after a genuinely new established TCP session
+            // survives several consecutive scans.
+            CrossFireTcpRoomMonitor.Apply(dashboard);
             CrossFireUiGuard.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
