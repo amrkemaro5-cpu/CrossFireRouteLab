@@ -2,7 +2,7 @@ name: Build Windows x64
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, tcp-existing-rtt-validation ]
   workflow_dispatch:
 
 permissions:
@@ -34,57 +34,28 @@ jobs:
           Set-Content $path $src -Encoding UTF8
           Write-Host 'V10 source compatibility normalization applied.'
 
-      - name: Verify unified CrossFire architecture
+      - name: Verify simple CrossFire TCP architecture
         shell: pwsh
         run: |
-          $required = @(
-            'CrossFireRouteEngine.cs',
-            'CrossFireUiGuard.cs',
-            'CrossFireWindowGuardV2.cs',
-            'Program.cs'
-          )
-          foreach ($path in $required) {
-            if (-not (Test-Path $path)) { throw "Required CrossFire file is missing: $path" }
+          if (-not (Test-Path 'CrossFireTcpSimple.cs')) { throw 'Simple CrossFire TCP reader is missing.' }
+          if (Test-Path 'CrossFireRouteEngine.cs') { throw 'Obsolete complex CrossFire route engine still exists.' }
+
+          $tcp = Get-Content 'CrossFireTcpSimple.cs' -Raw
+          $program = Get-Content 'Program.cs' -Raw
+
+          foreach ($required in @('GetExtendedTcpTable','GetPerTcpConnectionEStats','SetPerTcpConnectionEStats','TcpConnectionEstatsFineRtt','ReadEstablishedTcpSockets','MeasureExistingTcpRtt')) {
+            if (-not $tcp.Contains($required)) { throw "Simple TCP implementation is missing: $required" }
           }
 
-          $obsolete = @(
-            'CrossFireTcpOnlyFinalPatch.cs',
-            'CrossFireRoomTransportProbeV3.cs',
-            'CrossFireRoomRouteOptimizerV2.cs',
-            'CrossFireAiRoutePatch.cs',
-            'CrossFireConnectionDiscoveryPatch.cs',
-            'CrossFireRoomLatencyUiPatch.cs',
-            'EndpointMeasurementPatch.cs',
-            'FinalAiRoutePatch.cs',
-            'RouteOptimizerPatch.cs',
-            'CrossFirePacketRoomDiscoveryPatchV2.cs',
-            'CrossFireRoomTransportPatch.cs',
-            'CrossFireSameTransportProbe.cs',
-            'CrossFireWindowGuard.cs'
-          )
-          foreach ($path in $obsolete) {
-            if (Test-Path $path) { throw "Obsolete CrossFire implementation still exists: $path" }
+          foreach ($forbidden in @('ControlPorts','NoisePorts','history','SeenCount','PktMon','UdpClient','SendPing','System.Net.Ping','PING       NOT CLAIMED','CONTROL FALLBACK','seen:')) {
+            if ($tcp.Contains($forbidden)) { throw "Old/complex TCP design leaked into the new reader: $forbidden" }
           }
 
-          $engine = Get-Content CrossFireRouteEngine.cs -Raw
-          $guard = Get-Content CrossFireUiGuard.cs -Raw
-          $program = Get-Content Program.cs -Raw
+          if ($tcp.Contains('client.ConnectAsync(ip, port)')) { throw 'The displayed CrossFire RTT must not be measured by opening a new TCP connection.' }
+          if (-not $program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs is not using the simple CrossFire TCP reader.' }
+          if ($program.Contains('CrossFireRouteEngine.Apply')) { throw 'Program.cs still references the obsolete CrossFire route engine.' }
 
-          if (-not $engine.Contains('GetCrossFireProcessFamily')) { throw 'CrossFire process-family discovery is missing.' }
-          if (-not $engine.Contains('netstat.exe')) { throw 'TCP socket discovery is missing.' }
-          if (-not $engine.Contains('"-n -o -p tcp"')) { throw 'TCP netstat query is missing.' }
-          if (-not $engine.Contains('history')) { throw 'TCP endpoint history is missing.' }
-          if (-not $engine.Contains('ControlPorts')) { throw 'Control-port classification is missing.' }
-          if (-not $engine.Contains('MeasureTcp')) { throw 'TCP route measurement is missing.' }
-          if (-not $engine.Contains('New-NetRoute')) { throw 'Route testing is missing.' }
-          if (-not $engine.Contains('PING       NOT CLAIMED')) { throw 'The UI must not falsely label TCP probes as the CrossFire room ping.' }
-          if ($engine -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|new\s+Ping\s*\(|SendPing') { throw 'Legacy UDP/ICMP/capture probing remains in the CrossFire engine.' }
-          if ($guard -match '(?i)UdpClient|pktmon\.exe|new\s+Ping\s*\(|SendPing') { throw 'Legacy measurement logic remains in the CrossFire UI guard.' }
-          if (-not $program.Contains('CrossFireRouteEngine.Apply')) { throw 'Unified CrossFire route engine is not wired into Program.cs.' }
-          if (-not $program.Contains('CrossFireUiGuard.Apply')) { throw 'CrossFire UI guard is not wired into Program.cs.' }
-          if ($program -match 'CrossFireTcpOnlyFinalPatch|CrossFireRoomTransportProbeV3|CrossFireRoomRouteOptimizerV2|FinalAiRoutePatch|CrossFireAiRoutePatch') { throw 'Old CrossFire layers are still wired into Program.cs.' }
-
-          Write-Host 'Unified CrossFire architecture verification passed.'
+          Write-Host 'Simple existing-socket TCP architecture verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
@@ -130,6 +101,13 @@ jobs:
           }
           '@ | Set-Content (Join-Path $testDir 'Program.cs') -Encoding UTF8
           dotnet run --project (Join-Path $testDir 'Smoke.csproj') -c Release
+
+      - name: Check known CrossFire TCP endpoint from Windows runner
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Write-Host 'This is only an external reachability check from the GitHub runner, not a room-ping claim.'
+          Test-NetConnection 67.210.208.54 -Port 10009 -InformationLevel Detailed
 
       - name: Publish Windows x64
         run: dotnet publish CrossFireRouteLab.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:DebugType=None -o publish
