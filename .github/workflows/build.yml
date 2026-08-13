@@ -34,20 +34,23 @@ jobs:
           Set-Content $path $src -Encoding UTF8
           Write-Host 'V10 source compatibility normalization applied.'
 
-      - name: Verify consolidated CrossFire TCP architecture
+      - name: Verify unified CrossFire architecture
         shell: pwsh
         run: |
           $required = @(
-            'CrossFireTcpOnlyFinalPatch.cs',
-            'CrossFireRoomTransportProbeV3.cs',
-            'CrossFireRoomRouteOptimizerV2.cs',
+            'CrossFireRouteEngine.cs',
+            'CrossFireUiGuard.cs',
+            'CrossFireWindowGuardV2.cs',
             'Program.cs'
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) { throw "Required CrossFire file is missing: $path" }
           }
 
-          $forbiddenFiles = @(
+          $obsolete = @(
+            'CrossFireTcpOnlyFinalPatch.cs',
+            'CrossFireRoomTransportProbeV3.cs',
+            'CrossFireRoomRouteOptimizerV2.cs',
             'CrossFireAiRoutePatch.cs',
             'CrossFireConnectionDiscoveryPatch.cs',
             'CrossFireRoomLatencyUiPatch.cs',
@@ -56,36 +59,32 @@ jobs:
             'RouteOptimizerPatch.cs',
             'CrossFirePacketRoomDiscoveryPatchV2.cs',
             'CrossFireRoomTransportPatch.cs',
-            'CrossFireSameTransportProbe.cs'
+            'CrossFireSameTransportProbe.cs',
+            'CrossFireWindowGuard.cs'
           )
-          foreach ($path in $forbiddenFiles) {
+          foreach ($path in $obsolete) {
             if (Test-Path $path) { throw "Obsolete CrossFire implementation still exists: $path" }
           }
 
-          $final = Get-Content CrossFireTcpOnlyFinalPatch.cs -Raw
-          $probe = Get-Content CrossFireRoomTransportProbeV3.cs -Raw
-          $optimizer = Get-Content CrossFireRoomRouteOptimizerV2.cs -Raw
+          $engine = Get-Content CrossFireRouteEngine.cs -Raw
+          $guard = Get-Content CrossFireUiGuard.cs -Raw
           $program = Get-Content Program.cs -Raw
 
-          if (-not $probe.Contains('netstat.exe')) { throw 'Live TCP socket discovery is missing.' }
-          if (-not $probe.Contains('"-n -o -p tcp"')) { throw 'TCP netstat query is missing.' }
-          if (-not $probe.Contains('TcpConnectSamples')) { throw 'TCP measurement is missing.' }
-          if (-not $probe.Contains('LIVE CROSSFIRE TCP SOCKET')) { throw 'Live TCP source label is missing.' }
-          if ($probe -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|new\s+Ping\s*\(|SendPing') { throw 'Legacy non-TCP measurement or packet capture remains in the CrossFire detector.' }
+          if (-not $engine.Contains('GetCrossFireProcessFamily')) { throw 'CrossFire process-family discovery is missing.' }
+          if (-not $engine.Contains('netstat.exe')) { throw 'TCP socket discovery is missing.' }
+          if (-not $engine.Contains('"-n -o -p tcp"')) { throw 'TCP netstat query is missing.' }
+          if (-not $engine.Contains('history')) { throw 'TCP endpoint history is missing.' }
+          if (-not $engine.Contains('ControlPorts')) { throw 'Control-port classification is missing.' }
+          if (-not $engine.Contains('MeasureTcp')) { throw 'TCP route measurement is missing.' }
+          if (-not $engine.Contains('New-NetRoute')) { throw 'Route testing is missing.' }
+          if (-not $engine.Contains('PING       NOT CLAIMED')) { throw 'The UI must not falsely label TCP probes as the CrossFire room ping.' }
+          if ($engine -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|new\s+Ping\s*\(|SendPing') { throw 'Legacy UDP/ICMP/capture probing remains in the CrossFire engine.' }
+          if ($guard -match '(?i)UdpClient|pktmon\.exe|new\s+Ping\s*\(|SendPing') { throw 'Legacy measurement logic remains in the CrossFire UI guard.' }
+          if (-not $program.Contains('CrossFireRouteEngine.Apply')) { throw 'Unified CrossFire route engine is not wired into Program.cs.' }
+          if (-not $program.Contains('CrossFireUiGuard.Apply')) { throw 'CrossFire UI guard is not wired into Program.cs.' }
+          if ($program -match 'CrossFireTcpOnlyFinalPatch|CrossFireRoomTransportProbeV3|CrossFireRoomRouteOptimizerV2|FinalAiRoutePatch|CrossFireAiRoutePatch') { throw 'Old CrossFire layers are still wired into Program.cs.' }
 
-          if (-not $final.Contains('StopGenericTimers')) { throw 'Generic CrossFire connection/ping timers are not isolated.' }
-          if (-not $final.Contains('InstallButtonGuards')) { throw 'CrossFire button guards are missing.' }
-          if (-not $final.Contains('TcpSamples')) { throw 'Fresh TCP button measurement is missing.' }
-          if ($final -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|new\s+Ping\s*\(|SendPing|TCP/UDP') { throw 'Legacy transport logic remains in the CrossFire TCP layer.' }
-
-          if (-not $optimizer.Contains('MeasureTcp')) { throw 'TCP route optimizer measurement is missing.' }
-          if ($optimizer -match '(?i)UdpClient|pktmon\.exe|new\s+Ping\s*\(|SendPing') { throw 'Legacy non-TCP measurement remains in the route optimizer.' }
-
-          if (-not $program.Contains('CrossFireTcpOnlyFinalPatch.Apply')) { throw 'TCP-only CrossFire layer is not installed.' }
-          if (-not $program.Contains('CrossFireRoomRouteOptimizerV2.Apply')) { throw 'TCP route optimizer is not installed.' }
-          if ($program -match 'CrossFireAiRoutePatch|FinalAiRoutePatch|EndpointMeasurementPatch|CrossFireConnectionDiscoveryPatch') { throw 'Duplicate CrossFire route layer is still wired into Program.cs.' }
-
-          Write-Host 'Consolidated CrossFire TCP architecture verification passed.'
+          Write-Host 'Unified CrossFire architecture verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
