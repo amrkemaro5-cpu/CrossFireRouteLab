@@ -85,8 +85,6 @@ internal static class CrossFireTcpRoomMonitor
                     return;
                 }
 
-                // A new local TCP port makes a new session visible even when
-                // CrossFire reconnects to the same remote IP:port.
                 var candidates = sockets
                     .Where(x => !baseline.Contains(Key(x)))
                     .Where(x => !IsWebPort(x.Port))
@@ -253,14 +251,14 @@ internal static class CrossFireTcpRoomMonitor
         };
 
         var rw = Marshal.AllocHGlobal(1);
-        var rod = Marshal.AllocHGlobal(Marshal.SizeOf<TcpEstatsPathRodV0>());
+        var rodSize = Marshal.SizeOf<TcpEstatsPathRodV0>();
+        var rod = Marshal.AllocHGlobal(rodSize);
         try
         {
             Marshal.WriteByte(rw, 1);
             var enableRc = SetPerTcpConnectionEStats(ref row, TCP_ESTATS_PATH, rw, 0, 1, 0);
             if (enableRc != NO_ERROR) return -1;
 
-            // Give Windows a moment to update the path statistics.
             await Task.Delay(60).ConfigureAwait(false);
 
             var rwRead = Marshal.AllocHGlobal(1);
@@ -269,7 +267,7 @@ internal static class CrossFireTcpRoomMonitor
                 var rc = GetPerTcpConnectionEStats(ref row, TCP_ESTATS_PATH,
                     rwRead, 0, 1,
                     IntPtr.Zero, 0, 0,
-                    rod, 0, Marshal.SizeOf<TcpEstatsPathRodV0>());
+                    rod, 0, (uint)rodSize);
                 if (rc != NO_ERROR || Marshal.ReadByte(rwRead) == 0) return -1;
             }
             finally { Marshal.FreeHGlobal(rwRead); }
