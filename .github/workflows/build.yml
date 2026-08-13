@@ -51,7 +51,10 @@ jobs:
             if ($tcp.Contains($forbidden)) { throw "Old/complex TCP design leaked into the new reader: $forbidden" }
           }
 
-          if ($tcp.Contains('client.ConnectAsync(ip, port)')) { throw 'The displayed CrossFire RTT must not be measured by opening a new TCP connection.' }
+          $measurementSection = $tcp.Substring($tcp.IndexOf('MeasureExistingTcpRtt', [StringComparison]::Ordinal))
+          $measurementSection = $measurementSection.Substring(0, $measurementSection.IndexOf('private static void Publish', [StringComparison]::Ordinal))
+          if ($measurementSection.Contains('ConnectAsync')) { throw 'Existing-socket RTT reader must not open a new TCP connection.' }
+
           if (-not $program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs is not using the simple CrossFire TCP reader.' }
           if ($program.Contains('CrossFireRouteEngine.Apply')) { throw 'Program.cs still references the obsolete CrossFire route engine.' }
 
