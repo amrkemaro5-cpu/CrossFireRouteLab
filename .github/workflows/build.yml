@@ -29,10 +29,11 @@ jobs:
           $src = $src.Replace('Text = "Game Route Lab v10";', 'base.Text = "Game Route Lab v10";')
           $src = $src.Replace('public RadarPanel() { DoubleBuffered = true; BackColor = Color.Transparent; }', 'public RadarPanel() { DoubleBuffered = true; BackColor = Color.FromArgb(3, 7, 17); }')
 
-          # Remove the legacy UDP connection enumeration from the generic V10 form.
+          # Remove legacy UDP enumeration from the generic V10 form before compilation.
           $src = [regex]::Replace($src, '(?s)\s*foreach \(var line in RunNetstat\("-ano -p udp"\)\)\s*\{.*?\n        \}', '')
 
-          # Make the generic V10 probe TCP-only as well.
+          # Make the generic V10 probe TCP-only as well. CrossFire itself is owned
+          # by CrossFireTcpRoomMonitor and never uses this generic probe path.
           $tcpProbe = @(
             '    double Probe(string ip, int port)',
             '    {',
@@ -56,40 +57,38 @@ jobs:
           ) -join "`r`n"
           $src = [regex]::Replace($src, '(?s)\s*double Probe\(string ip, int port\)\s*\{.*?\n    \}', "`r`n$tcpProbe")
           Set-Content $path $src -Encoding UTF8
-
           Write-Host 'TCP-only V10 build normalization applied.'
 
-      - name: Verify room-aware TCP architecture and no UDP probes
+      - name: Verify repaired CrossFire TCP architecture
         shell: pwsh
         run: |
-          if (-not (Test-Path 'CrossFireSessionTcp.cs')) { throw 'Room-aware TCP observer is missing.' }
-          if (Test-Path 'CrossFireTcpSimple.cs') { throw 'Obsolete lowest-RTT TCP selector still exists.' }
-          if (Test-Path 'CrossFireRouteEngine.cs') { throw 'Obsolete complex CrossFire route engine still exists.' }
+          if (-not (Test-Path 'CrossFireTcpRoomMonitor.cs')) { throw 'Repaired CrossFire TCP room monitor is missing.' }
 
-          $tcp = Get-Content 'CrossFireSessionTcp.cs' -Raw
-          $form = Get-Content 'GameRouteLabV10Form.cs' -Raw
+          $tcp = Get-Content 'CrossFireTcpRoomMonitor.cs' -Raw
           $program = Get-Content 'Program.cs' -Raw
+          $form = Get-Content 'GameRouteLabV10Form.cs' -Raw
 
-          foreach ($required in @('GetExtendedTcpTable','GetPerTcpConnectionEStats','SetPerTcpConnectionEStats','MeasureExistingTcpRtt','Channel baseline captured','NEW SESSION TCP candidate','ROOM TCP   NOT EXPOSED')) {
-            if (-not $tcp.Contains($required)) { throw "Room-aware TCP implementation is missing: $required" }
+          foreach ($required in @('GetExtendedTcpTable','GetPerTcpConnectionEStats','SetPerTcpConnectionEStats','TCP_ESTATS_PATH','SampleRtt','SmoothedRtt','Channel TCP baseline locked','NEW ROOM TCP SESSION confirmed','ROOM TCP    NOT OBSERVED')) {
+            if (-not $tcp.Contains($required)) { throw "Repaired TCP monitor is missing: $required" }
           }
 
-          foreach ($forbidden in @('UdpClient','System.Net.Ping','SendPing','ConnectAsync','CONTROL FALLBACK','SeenCount','PktMon')) {
-            if ($tcp.Contains($forbidden)) { throw "Forbidden/legacy probe logic leaked into the room-aware TCP observer: $forbidden" }
+          foreach ($forbidden in @('UdpClient','System.Net.Ping','new Ping()','SendPing','ConnectAsync','PktMon','RunNetstat("-ano -p udp")')) {
+            if ($tcp.Contains($forbidden)) { throw "Forbidden transport/probe leaked into repaired CrossFire TCP monitor: $forbidden" }
           }
 
           foreach ($forbiddenForm in @('-ano -p udp','new Ping()','"UDP"')) {
-            if ($form.Contains($forbiddenForm)) { throw "TCP-only build still contains legacy network probe code: $forbiddenForm" }
+            if ($form.Contains($forbiddenForm)) { throw "TCP-only normalized form still contains legacy transport code: $forbiddenForm" }
           }
 
+          if (-not $program.Contains('CrossFireTcpRoomMonitor.Apply')) { throw 'Program.cs is not using the repaired CrossFire TCP monitor.' }
+          if ($program.Contains('CrossFireSessionTcp.Apply')) { throw 'Program.cs still invokes the superseded room observer.' }
+          if ($program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs still invokes the obsolete TCP selector.' }
+
           $csFiles = Get-ChildItem -Path . -Filter *.cs -Recurse | ForEach-Object { Get-Content $_.FullName -Raw }
-          if (($csFiles -join "`n") -match 'UdpClient|RunNetstat\("-ano -p udp"\)') { throw 'UDP socket/probe code remains in the compiled C# source set.' }
+          $joined = $csFiles -join "`n"
+          if ($joined -match 'UdpClient|RunNetstat\("-ano -p udp"\)') { throw 'UDP socket/probe code remains in the compiled C# source set.' }
 
-          if (-not $program.Contains('CrossFireSessionTcp.Apply')) { throw 'Program.cs is not using the room-aware TCP observer.' }
-          if ($program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs still references the removed TCP selector.' }
-          if ($program.Contains('CrossFireRouteEngine.Apply')) { throw 'Program.cs still references the obsolete route engine.' }
-
-          Write-Host 'Room-aware TCP + TCP-only source verification passed.'
+          Write-Host 'Repaired CrossFire TCP architecture verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
@@ -140,7 +139,7 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
-          Write-Host 'This is only an external reachability check from the GitHub runner, not a room-ping claim.'
+          Write-Host 'External reachability check only; this is not a CrossFire room-ping claim.'
           Test-NetConnection 67.210.208.54 -Port 10009 -InformationLevel Detailed
 
       - name: Publish Windows x64
