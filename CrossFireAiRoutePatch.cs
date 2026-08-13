@@ -17,7 +17,6 @@ internal static class CrossFireAiRoutePatch
     {
         if (armed || form.IsDisposed) return;
         armed = true;
-        UpdateUi(form);
 
         var button = FindButton(form, "AUTO ANALYZE");
         if (button == null)
@@ -97,9 +96,7 @@ internal static class CrossFireAiRoutePatch
             type.GetField("endpointPort", flags)?.SetValue(form, port);
             if (type.GetField("endpointBox", flags)?.GetValue(form) is TextBox box) box.Text = $"{ip}:{port}";
             if (type.GetField("metrics", flags)?.GetValue(form) is Label metrics)
-            {
                 metrics.Text = $"ENDPOINT   {ip}:{port}\r\nPROTOCOL   TCP\r\nSOURCE     LIVE CROSSFIRE TCP SOCKET\r\nSTATUS     ACTUAL TCP TARGET\r\nTRANSPORT  TCP ONLY";
-            }
             if (type.GetField("quality", flags)?.GetValue(form) is Label quality)
             {
                 quality.Text = $"● ACTUAL CROSSFIRE TCP • {ip}:{port}";
@@ -107,21 +104,6 @@ internal static class CrossFireAiRoutePatch
             }
         }
         catch (Exception ex) { Log(form, "[AI ROUTE ENGINE] UI publish warning: " + ex.Message); }
-    }
-
-    static void UpdateUi(GameRouteLabV10Form form)
-    {
-        try
-        {
-            foreach (var control in AllControls(form))
-            {
-                if (control is Label label && (label.Text.Contains("TCP + UDP", StringComparison.OrdinalIgnoreCase) || label.Text.Contains("TCP/UDP", StringComparison.OrdinalIgnoreCase)))
-                    label.Text = "Game Route Lab v10.0  •  CROSSFIRE TCP-ONLY ROUTING";
-                if (control is Label guide && guide.Text.Contains("AUTO ANALYZE", StringComparison.OrdinalIgnoreCase) && guide.Text.Contains("UDP", StringComparison.OrdinalIgnoreCase))
-                    guide.Text = "Press AUTO ANALYZE — TCP-only CrossFire room/server route pass runs automatically.";
-            }
-        }
-        catch { }
     }
 
     static Button? FindButton(Control root, string text) => AllControls(root).OfType<Button>().FirstOrDefault(x => x.Text.Equals(text, StringComparison.OrdinalIgnoreCase));
