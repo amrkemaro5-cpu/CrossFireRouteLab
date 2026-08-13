@@ -80,7 +80,7 @@ internal static class CrossFireSessionTcp
                     if (currentKeys.Count == 0) return;
                     _channelSessions = currentKeys;
                     _baselineReady = true;
-                    Publish(form, sockets, Array.Empty<TcpSocket>(), false);
+                    Publish(form, sockets, new List<TcpSocket>(), false);
                     Write(form, $"[CROSSFIRE TCP] Channel baseline captured: {currentKeys.Count} established TCP session(s). Enter a room now; a NEW TCP session will be tested if CrossFire exposes one.");
                     return;
                 }
@@ -94,7 +94,7 @@ internal static class CrossFireSessionTcp
                     _candidateKey = "";
                     _candidateStreak = 0;
                     _activeCandidate = "";
-                    Publish(form, sockets, Array.Empty<TcpSocket>(), false);
+                    Publish(form, sockets, new List<TcpSocket>(), false);
                     SetEndpoint(form, null, 0);
                     return;
                 }
@@ -123,7 +123,7 @@ internal static class CrossFireSessionTcp
                 if (stable)
                 {
                     var best = measured.Where(x => x.RttMs >= 0).OrderBy(x => x.RttMs).FirstOrDefault();
-                    if (best.Ip != null)
+                    if (best is not null)
                     {
                         var activeKey = Key(best);
                         if (!activeKey.Equals(_activeCandidate, StringComparison.OrdinalIgnoreCase))
@@ -261,7 +261,7 @@ internal static class CrossFireSessionTcp
                     if (stable && candidates.Count > 0)
                     {
                         var best = candidates.Where(x => x.RttMs >= 0).OrderBy(x => x.RttMs).FirstOrDefault();
-                        metrics.Text = best.Ip == null ? "ROOM TCP   CANDIDATE\r\nRTT         UNAVAILABLE\r\nSTATUS      WAITING" : $"ROOM TCP   {best.Ip}:{best.Port}\r\nTCP RTT     {best.RttMs:0.0} ms\r\nSTATUS      TCP SESSION CANDIDATE";
+                        metrics.Text = best is null ? "ROOM TCP   CANDIDATE\r\nRTT         UNAVAILABLE\r\nSTATUS      WAITING" : $"ROOM TCP   {best.Ip}:{best.Port}\r\nTCP RTT     {best.RttMs:0.0} ms\r\nSTATUS      TCP SESSION CANDIDATE";
                     }
                     else
                     {
