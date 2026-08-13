@@ -34,22 +34,30 @@ jobs:
           Set-Content $path $src -Encoding UTF8
           Write-Host 'V10 source compatibility normalization applied.'
 
-      - name: Verify final CrossFire room detector and AI target handoff
+      - name: Verify CrossFire TCP-only detector and AI target handoff
         shell: pwsh
         run: |
-          $src = Get-Content CrossFireRoomTransportProbeV3.cs -Raw
-          if (-not $src.Contains('static bool IsRoomFlow(Flow f)')) { throw 'Final room classifier is missing.' }
-          if (-not $src.Contains('ControlPorts.Contains(f.RemotePort)')) { throw 'Control-port guard is missing.' }
-          if (-not $src.Contains('f.RemotePort >= 11000 && f.RemotePort <= 16000')) { throw 'Dynamic UDP room-port range is missing.' }
-          if (-not $src.Contains('SELECTED ACTUAL ROOM')) { throw 'Actual-room publish path is missing.' }
-          if (-not $src.Contains('ROUTE TARGET ONLY (UDP room; no synthetic probe)')) { throw 'UDP room route-target state is missing.' }
+          $probe = Get-Content CrossFireRoomTransportProbeV3.cs -Raw
+          if (-not $probe.Contains('netstat.exe')) { throw 'TCP socket discovery is missing.' }
+          if (-not $probe.Contains('"-n -o -p tcp"')) { throw 'TCP netstat query is missing.' }
+          if (-not $probe.Contains('TcpConnectSamples')) { throw 'TCP RTT measurement is missing.' }
+          if (-not $probe.Contains('LIVE CROSSFIRE TCP SOCKET')) { throw 'Live TCP source label is missing.' }
+          if (-not $probe.Contains('UDP        REMOVED')) { throw 'UDP removal state is missing.' }
+          if ($probe.Contains('pktmon.exe')) { throw 'Packet capture/UDP-era detector must not remain in the TCP-only probe.' }
           $ai = Get-Content CrossFireAiRoutePatch.cs -Raw
-          if (-not $ai.Contains('CrossFireRoomTransportProbeV3.TryGetTarget')) { throw 'AI must consume the V3-verified room target.' }
-          if ($ai.Contains('One-click TCP mode armed')) { throw 'Legacy TCP-only AI mode is still active.' }
-          if (-not $ai.Contains('TCP/UDP')) { throw 'Transport-aware AI wording is missing.' }
+          if (-not $ai.Contains('CrossFireRoomTransportProbeV3.TryGetTarget')) { throw 'AI must consume the live TCP target.' }
+          if (-not $ai.Contains('protocol.Equals("TCP"')) { throw 'AI must reject non-TCP targets.' }
+          if ($ai.Contains('TCP/UDP')) { throw 'Transport-aware TCP/UDP wording remains in the AI layer.' }
+          $optimizer = Get-Content CrossFireRoomRouteOptimizerV2.cs -Raw
+          if (-not $optimizer.Contains('MeasureTcp')) { throw 'Route optimizer TCP measurement is missing.' }
+          if ($optimizer.Contains('Ping') -or $optimizer.Contains('ICMP')) { throw 'ICMP/UDP proxy measurement remains in the route optimizer.' }
           $program = Get-Content Program.cs -Raw
-          if ($program.Contains('CrossFireTcpOnlyFinalPatch.Apply')) { throw 'Legacy TCP-only override is still active.' }
-          Write-Host 'CrossFire final detector + transport-aware AI verification passed.'
+          if (-not $program.Contains('CrossFireTcpOnlyFinalPatch.Apply')) { throw 'TCP-only CrossFire layer is not installed.' }
+          if ($program.Contains('CrossFirePacketRoomDiscoveryPatchV2.Apply') -or $program.Contains('CrossFireRoomTransportPatch.Apply') -or $program.Contains('CrossFireRoomTransportProbeV3.Apply')) { throw 'Legacy CrossFire transport stack is still being applied.' }
+          if (Test-Path CrossFirePacketRoomDiscoveryPatchV2.cs) { throw 'Legacy UDP packet discovery file still exists.' }
+          if (Test-Path CrossFireRoomTransportPatch.cs) { throw 'Legacy UDP transport file still exists.' }
+          if (Test-Path CrossFireSameTransportProbe.cs) { throw 'Legacy UDP same-transport probe still exists.' }
+          Write-Host 'CrossFire TCP-only verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
