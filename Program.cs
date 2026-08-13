@@ -25,9 +25,12 @@ internal static class Program
             AutoOptimizationPatch.Apply(dashboard);
             GenericGameDetectionPatch.Apply(dashboard);
 
-            // CrossFire has one route path only: live TCP socket -> TCP measurement -> route optimizer.
-            CrossFireTcpOnlyFinalPatch.Apply(dashboard);
-            CrossFireRoomRouteOptimizerV2.Apply(dashboard);
+            // CrossFire has one dedicated coordinator. It discovers the complete
+            // CrossFire process family, tracks live TCP candidates, and separately
+            // benchmarks/apply-tests Windows routes. It does not claim a TCP probe
+            // is the game's displayed room ping.
+            CrossFireRouteEngine.Apply(dashboard);
+            CrossFireUiGuard.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
             Application.Run(dashboard);
