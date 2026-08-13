@@ -34,7 +34,7 @@ jobs:
           Set-Content $path $src -Encoding UTF8
           Write-Host 'V10 source compatibility normalization applied.'
 
-      - name: Verify final CrossFire room detector
+      - name: Verify final CrossFire room detector and AI target handoff
         shell: pwsh
         run: |
           $src = Get-Content CrossFireRoomTransportProbeV3.cs -Raw
@@ -43,9 +43,13 @@ jobs:
           if (-not $src.Contains('f.RemotePort >= 11000 && f.RemotePort <= 16000')) { throw 'Dynamic UDP room-port range is missing.' }
           if (-not $src.Contains('SELECTED ACTUAL ROOM')) { throw 'Actual-room publish path is missing.' }
           if (-not $src.Contains('ROUTE TARGET ONLY (UDP room; no synthetic probe)')) { throw 'UDP room route-target state is missing.' }
+          $ai = Get-Content CrossFireAiRoutePatch.cs -Raw
+          if (-not $ai.Contains('CrossFireRoomTransportProbeV3.TryGetTarget')) { throw 'AI must consume the V3-verified room target.' }
+          if ($ai.Contains('TCP-only')) { throw 'Legacy TCP-only AI mode is still active.' }
+          if (-not $ai.Contains('TCP/UDP')) { throw 'Transport-aware AI wording is missing.' }
           $program = Get-Content Program.cs -Raw
           if ($program.Contains('CrossFireTcpOnlyFinalPatch.Apply')) { throw 'Legacy TCP-only override is still active.' }
-          Write-Host 'CrossFire final room detector verification passed.'
+          Write-Host 'CrossFire final detector + transport-aware AI verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
