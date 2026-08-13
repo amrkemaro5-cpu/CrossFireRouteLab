@@ -321,7 +321,7 @@ internal static class CrossFireSessionTcp
 
     [StructLayout(LayoutKind.Sequential)] private struct MibTcpRowOwnerPid { public uint DwState, DwLocalAddr, DwLocalPort, DwRemoteAddr, DwRemotePort, DwOwningPid; }
     [StructLayout(LayoutKind.Sequential)] private struct MibTcpRow { public uint DwState, DwLocalAddr, DwLocalPort, DwRemoteAddr, DwRemotePort; }
-    [StructLayout(LayoutKind.Sequential)] private struct TcpEstatsFineRttRodV0 { public long SumRtt; public long CountRtt; public long CurRtt; public long MaxRtt; public long MinRtt; public long VarRtt; public long Smoothing; public long BaseRtt; }
+    [StructLayout(LayoutKind.Sequential)] private struct TcpEstatsFineRttRodV0 { public uint RttVar; public uint MaxRtt; public uint MinRtt; public uint SumRtt; }
 
     private static int NetworkToHostPort(uint value) => (int)IPAddress.NetworkToHostOrder(unchecked((short)value)) & 0xFFFF;
     private static bool IsPublicIPv4(string ip) => IPAddress.TryParse(ip, out var address) && address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !IPAddress.IsLoopback(address) && !address.Equals(IPAddress.Any);
