@@ -2,7 +2,7 @@ name: Build Windows x64
 
 on:
   push:
-    branches: [ main, tcp-existing-rtt-validation ]
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -34,31 +34,29 @@ jobs:
           Set-Content $path $src -Encoding UTF8
           Write-Host 'V10 source compatibility normalization applied.'
 
-      - name: Verify simple CrossFire TCP architecture
+      - name: Verify room-aware TCP architecture
         shell: pwsh
         run: |
-          if (-not (Test-Path 'CrossFireTcpSimple.cs')) { throw 'Simple CrossFire TCP reader is missing.' }
+          if (-not (Test-Path 'CrossFireSessionTcp.cs')) { throw 'Room-aware TCP observer is missing.' }
+          if (Test-Path 'CrossFireTcpSimple.cs') { throw 'Obsolete lowest-RTT TCP selector still exists.' }
           if (Test-Path 'CrossFireRouteEngine.cs') { throw 'Obsolete complex CrossFire route engine still exists.' }
 
-          $tcp = Get-Content 'CrossFireTcpSimple.cs' -Raw
+          $tcp = Get-Content 'CrossFireSessionTcp.cs' -Raw
           $program = Get-Content 'Program.cs' -Raw
 
-          foreach ($required in @('GetExtendedTcpTable','GetPerTcpConnectionEStats','SetPerTcpConnectionEStats','TcpConnectionEstatsFineRtt','ReadEstablishedTcpSockets','MeasureExistingTcpRtt')) {
-            if (-not $tcp.Contains($required)) { throw "Simple TCP implementation is missing: $required" }
+          foreach ($required in @('GetExtendedTcpTable','GetPerTcpConnectionEStats','SetPerTcpConnectionEStats','MeasureExistingTcpRtt','Channel baseline captured','NEW SESSION TCP candidate','ROOM TCP   NOT EXPOSED')) {
+            if (-not $tcp.Contains($required)) { throw "Room-aware TCP implementation is missing: $required" }
           }
 
-          foreach ($forbidden in @('ControlPorts','NoisePorts','history','SeenCount','PktMon','UdpClient','SendPing','System.Net.Ping','PING       NOT CLAIMED','CONTROL FALLBACK','seen:')) {
-            if ($tcp.Contains($forbidden)) { throw "Old/complex TCP design leaked into the new reader: $forbidden" }
+          foreach ($forbidden in @('UdpClient','System.Net.Ping','SendPing','ConnectAsync','CONTROL FALLBACK','SeenCount','PktMon')) {
+            if ($tcp.Contains($forbidden)) { throw "Forbidden/legacy probe logic leaked into the room-aware TCP observer: $forbidden" }
           }
 
-          $measurementSection = $tcp.Substring($tcp.IndexOf('MeasureExistingTcpRtt', [StringComparison]::Ordinal))
-          $measurementSection = $measurementSection.Substring(0, $measurementSection.IndexOf('private static void Publish', [StringComparison]::Ordinal))
-          if ($measurementSection.Contains('ConnectAsync')) { throw 'Existing-socket RTT reader must not open a new TCP connection.' }
+          if (-not $program.Contains('CrossFireSessionTcp.Apply')) { throw 'Program.cs is not using the room-aware TCP observer.' }
+          if ($program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs still references the removed TCP selector.' }
+          if ($program.Contains('CrossFireRouteEngine.Apply')) { throw 'Program.cs still references the obsolete route engine.' }
 
-          if (-not $program.Contains('CrossFireTcpSimple.Apply')) { throw 'Program.cs is not using the simple CrossFire TCP reader.' }
-          if ($program.Contains('CrossFireRouteEngine.Apply')) { throw 'Program.cs still references the obsolete CrossFire route engine.' }
-
-          Write-Host 'Simple existing-socket TCP architecture verification passed.'
+          Write-Host 'Room-aware TCP architecture verification passed.'
 
       - name: Build with warnings treated as errors
         run: dotnet build CrossFireRouteLab.csproj -c Release -warnaserror
