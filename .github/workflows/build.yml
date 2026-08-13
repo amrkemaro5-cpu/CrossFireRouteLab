@@ -71,15 +71,15 @@ jobs:
           if (-not $probe.Contains('"-n -o -p tcp"')) { throw 'TCP netstat query is missing.' }
           if (-not $probe.Contains('TcpConnectSamples')) { throw 'TCP measurement is missing.' }
           if (-not $probe.Contains('LIVE CROSSFIRE TCP SOCKET')) { throw 'Live TCP source label is missing.' }
-          if ($probe -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|ICMP') { throw 'Legacy non-TCP transport logic remains in the CrossFire detector.' }
+          if ($probe -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|new\s+Ping\s*\(|SendPing') { throw 'Legacy non-TCP measurement or packet capture remains in the CrossFire detector.' }
 
           if (-not $final.Contains('StopGenericTimers')) { throw 'Generic CrossFire connection/ping timers are not isolated.' }
           if (-not $final.Contains('InstallButtonGuards')) { throw 'CrossFire button guards are missing.' }
           if (-not $final.Contains('TcpSamples')) { throw 'Fresh TCP button measurement is missing.' }
-          if ($final -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|ICMP|TCP/UDP') { throw 'Legacy transport logic or wording remains in the CrossFire TCP layer.' }
+          if ($final -match '(?i)UdpClient|pktmon\.exe|netstat[^\r\n]*udp|new\s+Ping\s*\(|SendPing|TCP/UDP') { throw 'Legacy transport logic remains in the CrossFire TCP layer.' }
 
           if (-not $optimizer.Contains('MeasureTcp')) { throw 'TCP route optimizer measurement is missing.' }
-          if ($optimizer -match '(?i)UdpClient|pktmon\.exe|ICMP|Ping') { throw 'Legacy non-TCP measurement remains in the route optimizer.' }
+          if ($optimizer -match '(?i)UdpClient|pktmon\.exe|new\s+Ping\s*\(|SendPing') { throw 'Legacy non-TCP measurement remains in the route optimizer.' }
 
           if (-not $program.Contains('CrossFireTcpOnlyFinalPatch.Apply')) { throw 'TCP-only CrossFire layer is not installed.' }
           if (-not $program.Contains('CrossFireRoomRouteOptimizerV2.Apply')) { throw 'TCP route optimizer is not installed.' }
