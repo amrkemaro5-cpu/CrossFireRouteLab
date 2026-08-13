@@ -25,11 +25,12 @@ internal static class Program
             AutoOptimizationPatch.Apply(dashboard);
             GenericGameDetectionPatch.Apply(dashboard);
 
-            // CrossFire TCP is intentionally simple: enumerate every established
-            // TCP socket owned by the CrossFire process family and read RTT from
-            // the existing socket. No UDP discovery, no control-port ranking,
-            // no endpoint history, and no synthetic TCP connect used as ping.
-            CrossFireTcpSimple.Apply(dashboard);
+            // CrossFire is handled separately from generic game endpoint selection.
+            // The observer captures the channel TCP baseline first and only exposes
+            // a persistent NEW TCP session after the channel state changes. It never
+            // uses UDP, never creates a synthetic TCP ping, and never selects the
+            // fastest web/control socket as the game target.
+            CrossFireSessionTcp.Apply(dashboard);
             CrossFireUiGuard.Apply(dashboard);
 
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
