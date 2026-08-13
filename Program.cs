@@ -23,21 +23,16 @@ internal static class Program
             IspTrackerPatch.Apply(dashboard);
             TelemetryVisibilityPatch.Apply(dashboard);
             AutoOptimizationPatch.Apply(dashboard);
-            EndpointMeasurementPatch.Apply(dashboard);
             GenericGameDetectionPatch.Apply(dashboard);
-            CrossFireConnectionDiscoveryPatch.Apply(dashboard);
-            CrossFireRoomTransportPatch.Apply(dashboard);
-            CrossFirePacketRoomDiscoveryPatchV2.Apply(dashboard);
+
+            // CrossFire is deliberately TCP-only in this build.
+            // The TCP layer discovers the live CrossFire socket and measures
+            // TCP connection/handshake latency against that exact endpoint.
+            CrossFireTcpOnlyFinalPatch.Apply(dashboard);
             CrossFireAiRoutePatch.Apply(dashboard);
-            CrossFireRoomTransportProbeV3.Apply(dashboard);
-            CrossFireRoomLatencyUiPatch.Apply(dashboard);
-            RouteOptimizerPatch.Apply(dashboard);
             CrossFireRoomRouteOptimizerV2.Apply(dashboard);
             FinalAiRoutePatch.Apply(dashboard);
 
-            // Do not apply the old TCP-only override here. CrossFire room traffic
-            // can be UDP on a dynamic room port; forcing TCP caused 10009/control
-            // sockets to be mislabeled as the room and prevented route optimization.
             using var crossFireGuard = new CrossFireWindowGuardV2(dashboard);
             Application.Run(dashboard);
         }
