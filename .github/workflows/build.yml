@@ -32,30 +32,28 @@ jobs:
           # Remove the legacy UDP connection enumeration from the generic V10 form.
           $src = [regex]::Replace($src, '(?s)\s*foreach \(var line in RunNetstat\("-ano -p udp"\)\)\s*\{.*?\n        \}', '')
 
-          # Make the generic V10 probe TCP-only as well. This is deliberately a
-          # connection-time probe for generic path testing; CrossFire room RTT
-          # comes only from an existing TCP session in CrossFireSessionTcp.
-          $tcpProbe = @'
-    double Probe(string ip, int port)
-    {
-        if (port > 0 && port < 65536)
-        {
-            try
-            {
-                var sw = Stopwatch.StartNew();
-                using var client = new TcpClient { NoDelay = true };
-                var task = client.ConnectAsync(ip, port);
-                if (task.Wait(850) && client.Connected)
-                {
-                    sw.Stop();
-                    return sw.Elapsed.TotalMilliseconds;
-                }
-            }
-            catch { }
-        }
-        return -1;
-    }
-'@
+          # Make the generic V10 probe TCP-only as well.
+          $tcpProbe = @(
+            '    double Probe(string ip, int port)',
+            '    {',
+            '        if (port > 0 && port < 65536)',
+            '        {',
+            '            try',
+            '            {',
+            '                var sw = Stopwatch.StartNew();',
+            '                using var client = new TcpClient { NoDelay = true };',
+            '                var task = client.ConnectAsync(ip, port);',
+            '                if (task.Wait(850) && client.Connected)',
+            '                {',
+            '                    sw.Stop();',
+            '                    return sw.Elapsed.TotalMilliseconds;',
+            '                }',
+            '            }',
+            '            catch { }',
+            '        }',
+            '        return -1;',
+            '    }'
+          ) -join "`r`n"
           $src = [regex]::Replace($src, '(?s)\s*double Probe\(string ip, int port\)\s*\{.*?\n    \}', "`r`n$tcpProbe")
           Set-Content $path $src -Encoding UTF8
 
