@@ -1,0 +1,34 @@
+name: Build CF REZ x86 Native Bridge
+on:
+  push:
+    paths:
+      - 'CF_REZ_Editor/ClassicDesign/NativeBridge/**'
+      - '.github/workflows/cf-rez-native-bridge.yml'
+  workflow_dispatch:
+jobs:
+  build-x86:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+      - name: Build 32-bit bridge
+        shell: cmd
+        run: cl /nologo /O2 /W3 /DWIN32_LEAN_AND_MEAN CF_REZ_Editor\ClassicDesign\NativeBridge\cfrez_native_bridge_x86.c /Fe:cfrez_native_x86.exe
+      - name: Verify x86 PE
+        shell: pwsh
+        run: |
+          $b=[IO.File]::ReadAllBytes('cfrez_native_x86.exe')
+          $pe=[BitConverter]::ToInt32($b,0x3c)
+          $machine=[BitConverter]::ToUInt16($b,$pe+4)
+          if($machine -ne 0x14c){ throw "Expected x86 PE, got 0x{0:X}" -f $machine }
+          Write-Host 'x86 PE verified'
+      - name: Package helper
+        shell: pwsh
+        run: |
+          Compress-Archive -Path cfrez_native_x86.exe,CF_REZ_Editor\ClassicDesign\NativeBridge\README.txt -DestinationPath CF_REZ_NativeBridge_x86.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CF_REZ_NativeBridge_x86
+          path: CF_REZ_NativeBridge_x86.zip
