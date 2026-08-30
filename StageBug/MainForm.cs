@@ -95,16 +95,9 @@ public sealed class MainForm : Form
 
     private void InitializeSession(object? sender, EventArgs e)
     {
-        if (controller.InitializeSession(out var message))
-        {
-            status.Text = message;
-            UpdateControlState();
-        }
-        else
-        {
-            status.Text = message;
-            UpdateControlState();
-        }
+        var ok = controller.InitializeSession(out var message);
+        status.Text = message;
+        UpdateControlState();
     }
 
     private void TriggerBoost(int number)
@@ -129,11 +122,8 @@ public sealed class MainForm : Form
             : "CrossFire: not detected";
 
         if (!found)
-        {
             session.Text = "Session: idle";
-        }
         else
-        {
             session.Text = controller.State switch
             {
                 StageBugSessionState.CrossFireDetected => "Session: CrossFire detected",
@@ -142,7 +132,6 @@ public sealed class MainForm : Form
                 StageBugSessionState.Boost2Applied => "Session: Boost 2 applied",
                 _ => "Session: idle"
             };
-        }
 
         UpdateControlState();
     }
