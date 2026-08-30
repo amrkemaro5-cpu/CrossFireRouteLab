@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Drawing;
-using System.Linq;
 using System.Windows.Forms;
 
 namespace StageBug;
@@ -9,17 +7,19 @@ public sealed class MainForm : Form
 {
     private readonly Label status = new();
     private readonly Label game = new();
+    private readonly Label session = new();
     private readonly Button initialize = new();
     private readonly Button boost1 = new();
     private readonly Button boost2 = new();
     private readonly Timer timer = new() { Interval = 1000 };
+    private readonly SessionController controller = new();
 
     public MainForm()
     {
         Text = "StageBug";
-        ClientSize = new Size(338, 320);
-        MinimumSize = new Size(338, 320);
-        MaximumSize = new Size(338, 320);
+        ClientSize = new Size(338, 340);
+        MinimumSize = new Size(338, 340);
+        MaximumSize = new Size(338, 340);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -31,21 +31,26 @@ public sealed class MainForm : Form
         {
             Text = "StageBug",
             Dock = DockStyle.Top,
-            Height = 48,
+            Height = 42,
             TextAlign = ContentAlignment.MiddleCenter,
-            Font = new Font("Segoe UI", 16F, FontStyle.Bold),
-            ForeColor = Color.White
+            Font = new Font("Segoe UI", 16F, FontStyle.Bold)
         };
 
         game.Text = "CrossFire: not detected";
         game.AutoSize = false;
-        game.Height = 32;
+        game.Height = 24;
         game.Dock = DockStyle.Top;
         game.TextAlign = ContentAlignment.MiddleCenter;
 
+        session.Text = "Session: idle";
+        session.AutoSize = false;
+        session.Height = 24;
+        session.Dock = DockStyle.Top;
+        session.TextAlign = ContentAlignment.MiddleCenter;
+
         status.Text = "Ready";
         status.AutoSize = false;
-        status.Height = 32;
+        status.Height = 30;
         status.Dock = DockStyle.Bottom;
         status.TextAlign = ContentAlignment.MiddleCenter;
 
@@ -54,15 +59,17 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill,
             ColumnCount = 1,
             RowCount = 3,
-            Padding = new Padding(24, 20, 24, 20)
+            Padding = new Padding(24, 12, 24, 14)
         };
-
         for (int i = 0; i < 3; i++)
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 33.3333F));
 
-        Configure(initialize, "INITIALIZE SESSION", () => status.Text = "Session initialization requested");
-        Configure(boost1, "TRIGGER BOOST 1", () => status.Text = "Boost 1 requested");
-        Configure(boost2, "TRIGGER BOOST 2", () => status.Text = "Boost 2 requested");
+        Configure(initialize, "INITIALIZE SESSION", InitializeSession);
+        Configure(boost1, "TRIGGER BOOST 1", () => TriggerBoost(1));
+        Configure(boost2, "TRIGGER BOOST 2", () => TriggerBoost(2));
+
+        boost1.Enabled = false;
+        boost2.Enabled = false;
 
         panel.Controls.Add(initialize, 0, 0);
         panel.Controls.Add(boost1, 0, 1);
@@ -70,6 +77,7 @@ public sealed class MainForm : Form
 
         Controls.Add(panel);
         Controls.Add(status);
+        Controls.Add(session);
         Controls.Add(game);
         Controls.Add(title);
 
@@ -78,20 +86,75 @@ public sealed class MainForm : Form
         UpdateGameState();
     }
 
-    private static void Configure(Button b, string text, Action action)
+    private static void Configure(Button b, string text, EventHandler handler)
     {
         b.Text = text;
         b.Dock = DockStyle.Fill;
         b.Margin = new Padding(0, 4, 0, 4);
         b.FlatStyle = FlatStyle.Flat;
         b.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        b.Click += (_, _) => action();
+        b.Click += handler;
+    }
+
+    private void InitializeSession(object? sender, EventArgs e)
+    {
+        if (controller.InitializeSession(out var message))
+        {
+            status.Text = message;
+            session.Text = "Session: initialized";
+            boost1.Enabled = true;
+            boost2.Enabled = true;
+        }
+        else
+        {
+            status.Text = message;
+            session.Text = "Session: waiting for CrossFire";
+            boost1.Enabled = false;
+            boost2.Enabled = false;
+        }
+    }
+
+    private void TriggerBoost(int number)
+    {
+        if (controller.TryTriggerBoost(number, out var message))
+            status.Text = message;
+        else
+        {
+            status.Text = message;
+            if (controller.State != StageBugSessionState.Initialized)
+            {
+                session.Text = controller.State == StageBugSessionState.CrossFireDetected
+                    ? "Session: CrossFire detected"
+                    : "Session: idle";
+                boost1.Enabled = false;
+                boost2.Enabled = false;
+            }
+        }
     }
 
     private void UpdateGameState()
     {
-        bool found = Process.GetProcessesByName("crossfire").Any();
-        game.Text = found ? "CrossFire: detected" : "CrossFire: not detected";
+        var found = controller.RefreshCrossFire();
+        game.Text = found
+            ? $"CrossFire: detected (PID {controller.CrossFireProcessId})"
+            : "CrossFire: not detected";
+
+        if (!found)
+        {
+            session.Text = "Session: idle";
+            boost1.Enabled = false;
+            boost2.Enabled = false;
+        }
+        else if (controller.State == StageBugSessionState.Initialized)
+        {
+            session.Text = "Session: initialized";
+            boost1.Enabled = true;
+            boost2.Enabled = true;
+        }
+        else
+        {
+            session.Text = "Session: CrossFire detected";
+        }
     }
 
     protected override void Dispose(bool disposing)
