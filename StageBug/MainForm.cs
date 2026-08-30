@@ -68,9 +68,6 @@ public sealed class MainForm : Form
         Configure(boost1, "TRIGGER BOOST 1", (_, _) => TriggerBoost(1));
         Configure(boost2, "TRIGGER BOOST 2", (_, _) => TriggerBoost(2));
 
-        boost1.Enabled = false;
-        boost2.Enabled = false;
-
         panel.Controls.Add(initialize, 0, 0);
         panel.Controls.Add(boost1, 0, 1);
         panel.Controls.Add(boost2, 0, 2);
@@ -101,24 +98,27 @@ public sealed class MainForm : Form
         if (controller.InitializeSession(out var message))
         {
             status.Text = message;
-            session.Text = "Session: initialized";
-            boost1.Enabled = true;
-            boost2.Enabled = true;
+            UpdateControlState();
         }
         else
         {
             status.Text = message;
-            session.Text = "Session: waiting for CrossFire";
-            boost1.Enabled = false;
-            boost2.Enabled = false;
+            UpdateControlState();
         }
     }
 
     private void TriggerBoost(int number)
     {
-        status.Text = controller.TryTriggerBoost(number, out var message)
-            ? message
-            : message;
+        var ok = controller.TryTriggerBoost(number, out var message);
+        status.Text = message;
+        UpdateControlState();
+    }
+
+    private void UpdateControlState()
+    {
+        initialize.Enabled = controller.State != StageBugSessionState.Boost2Applied;
+        boost1.Enabled = controller.State == StageBugSessionState.Initialized;
+        boost2.Enabled = controller.State == StageBugSessionState.Boost1Applied;
     }
 
     private void UpdateGameState()
@@ -131,19 +131,20 @@ public sealed class MainForm : Form
         if (!found)
         {
             session.Text = "Session: idle";
-            boost1.Enabled = false;
-            boost2.Enabled = false;
-        }
-        else if (controller.State == StageBugSessionState.Initialized)
-        {
-            session.Text = "Session: initialized";
-            boost1.Enabled = true;
-            boost2.Enabled = true;
         }
         else
         {
-            session.Text = "Session: CrossFire detected";
+            session.Text = controller.State switch
+            {
+                StageBugSessionState.CrossFireDetected => "Session: CrossFire detected",
+                StageBugSessionState.Initialized => "Session: initialized",
+                StageBugSessionState.Boost1Applied => "Session: Boost 1 applied",
+                StageBugSessionState.Boost2Applied => "Session: Boost 2 applied",
+                _ => "Session: idle"
+            };
         }
+
+        UpdateControlState();
     }
 
     protected override void Dispose(bool disposing)
