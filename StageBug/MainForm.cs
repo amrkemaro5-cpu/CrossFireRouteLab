@@ -11,7 +11,7 @@ public sealed class MainForm : Form
     private readonly Button initialize = new();
     private readonly Button boost1 = new();
     private readonly Button boost2 = new();
-    private readonly Timer timer = new() { Interval = 1000 };
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly SessionController controller = new();
 
     public MainForm()
@@ -65,8 +65,8 @@ public sealed class MainForm : Form
             panel.RowStyles.Add(new RowStyle(SizeType.Percent, 33.3333F));
 
         Configure(initialize, "INITIALIZE SESSION", InitializeSession);
-        Configure(boost1, "TRIGGER BOOST 1", () => TriggerBoost(1));
-        Configure(boost2, "TRIGGER BOOST 2", () => TriggerBoost(2));
+        Configure(boost1, "TRIGGER BOOST 1", (_, _) => TriggerBoost(1));
+        Configure(boost2, "TRIGGER BOOST 2", (_, _) => TriggerBoost(2));
 
         boost1.Enabled = false;
         boost2.Enabled = false;
@@ -86,14 +86,14 @@ public sealed class MainForm : Form
         UpdateGameState();
     }
 
-    private static void Configure(Button b, string text, EventHandler handler)
+    private static void Configure(Button button, string text, EventHandler handler)
     {
-        b.Text = text;
-        b.Dock = DockStyle.Fill;
-        b.Margin = new Padding(0, 4, 0, 4);
-        b.FlatStyle = FlatStyle.Flat;
-        b.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-        b.Click += handler;
+        button.Text = text;
+        button.Dock = DockStyle.Fill;
+        button.Margin = new Padding(0, 4, 0, 4);
+        button.FlatStyle = FlatStyle.Flat;
+        button.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        button.Click += handler;
     }
 
     private void InitializeSession(object? sender, EventArgs e)
@@ -116,20 +116,9 @@ public sealed class MainForm : Form
 
     private void TriggerBoost(int number)
     {
-        if (controller.TryTriggerBoost(number, out var message))
-            status.Text = message;
-        else
-        {
-            status.Text = message;
-            if (controller.State != StageBugSessionState.Initialized)
-            {
-                session.Text = controller.State == StageBugSessionState.CrossFireDetected
-                    ? "Session: CrossFire detected"
-                    : "Session: idle";
-                boost1.Enabled = false;
-                boost2.Enabled = false;
-            }
-        }
+        status.Text = controller.TryTriggerBoost(number, out var message)
+            ? message
+            : message;
     }
 
     private void UpdateGameState()
