@@ -22,15 +22,22 @@ public sealed class SessionController
     public bool RefreshCrossFire()
     {
         var process = Process.GetProcessesByName("crossfire").FirstOrDefault();
-        CrossFireProcessId = process?.Id;
-        if (process is null)
+        var newPid = process?.Id;
+
+        if (newPid is null)
         {
-            State = StageBugSessionState.Idle;
+            CrossFireProcessId = null;
+            ResetState();
             return false;
         }
 
+        if (CrossFireProcessId.HasValue && CrossFireProcessId.Value != newPid.Value)
+            ResetState();
+
+        CrossFireProcessId = newPid;
         if (State == StageBugSessionState.Idle)
             State = StageBugSessionState.CrossFireDetected;
+
         return true;
     }
 
@@ -74,6 +81,7 @@ public sealed class SessionController
 
             State = StageBugSessionState.Boost1Applied;
             Boost1AppliedAt = DateTimeOffset.Now;
+            Boost2AppliedAt = null;
             message = "Boost 1 state applied; ready for Boost 2.";
             return true;
         }
@@ -88,5 +96,13 @@ public sealed class SessionController
         Boost2AppliedAt = DateTimeOffset.Now;
         message = "Boost 2 state applied.";
         return true;
+    }
+
+    private void ResetState()
+    {
+        State = StageBugSessionState.Idle;
+        InitializedAt = null;
+        Boost1AppliedAt = null;
+        Boost2AppliedAt = null;
     }
 }
