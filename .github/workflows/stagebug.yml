@@ -22,29 +22,40 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Restore
+      - name: Restore reconstructed StageBug
         run: dotnet restore StageBug/StageBug.csproj
 
-      - name: Build with warnings treated as errors
+      - name: Build reconstructed StageBug with warnings treated as errors
         run: dotnet build StageBug/StageBug.csproj -c Release --no-restore -warnaserror
 
-      - name: Source safety checks
+      - name: Reconstructed source safety checks
         shell: pwsh
         run: |
           $files = Get-ChildItem StageBug -Filter *.cs -Recurse | ForEach-Object { Get-Content $_.FullName -Raw }
           $source = $files -join "`n"
           foreach ($forbidden in @('601E-D8EF-FC48-3467', 'p_encrypted_payload', 'secure_create_room_v4', 'secure_join_room_v4', 'WriteProcessMemory', 'CreateRemoteThread')) {
-            if ($source.Contains($forbidden)) { throw "Forbidden recovered/protected material or process-injection primitive found: $forbidden" }
+            if ($source.Contains($forbidden)) { throw "Forbidden recovered/protected material or process-injection primitive found in reconstructed client: $forbidden" }
           }
           foreach ($required in @('INITIALIZE SESSION', 'TRIGGER BOOST 1', 'TRIGGER BOOST 2')) {
             if (-not $source.Contains($required)) { throw "Required control missing: $required" }
           }
-          Write-Host 'StageBug source safety checks passed.'
+          Write-Host 'Reconstructed StageBug source checks passed.'
 
-      - name: Publish Windows x64
+      - name: Publish reconstructed StageBug Windows x64
         run: dotnet publish StageBug/StageBug.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o publish
 
-      - name: Package
+      - name: Build original-runtime patcher
+        run: dotnet publish StageBugOriginalPatch/StageBugOriginalPatch.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o original-patcher
+
+      - name: Package original-runtime launcher
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path original-package | Out-Null
+          Copy-Item original-patcher\StageBugOriginalPatch.exe original-package\StageBugOriginalPatch.exe -Force
+          Copy-Item StageBugOriginalPatch\README.txt original-package\README.txt -Force
+          Get-FileHash original-package\StageBugOriginalPatch.exe -Algorithm SHA256 | Format-List
+
+      - name: Package reconstructed StageBug
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path package | Out-Null
@@ -52,7 +63,14 @@ jobs:
           Copy-Item StageBug\README.md package\README.md -Force
           Get-FileHash package\StageBug.exe -Algorithm SHA256 | Format-List
 
-      - name: Upload StageBug artifact
+      - name: Upload original-runtime launcher
+        uses: actions/upload-artifact@v4
+        with:
+          name: StageBug-OriginalRuntime-NoActivation-x64
+          path: original-package
+          if-no-files-found: error
+
+      - name: Upload reconstructed StageBug
         uses: actions/upload-artifact@v4
         with:
           name: StageBug-Windows-x64
