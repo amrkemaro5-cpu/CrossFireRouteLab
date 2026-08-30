@@ -1,0 +1,46 @@
+name: Build StageBug Original Runtime Patcher
+
+on:
+  push:
+    branches: [ stagebug-reconstruction ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-patcher:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore StageBugOriginalPatch/StageBugOriginalPatch.csproj
+
+      - name: Build
+        run: dotnet build StageBugOriginalPatch/StageBugOriginalPatch.csproj -c Release --no-restore -warnaserror
+
+      - name: Publish Windows x64
+        run: dotnet publish StageBugOriginalPatch/StageBugOriginalPatch.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o publish
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item publish\StageBugOriginalPatch.exe package\StageBugOriginalPatch.exe -Force
+          $sha = (Get-FileHash package\StageBugOriginalPatch.exe -Algorithm SHA256).Hash
+          Set-Content package\SHA256.txt $sha
+          Write-Host "SHA256: $sha"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StageBug-OriginalRuntime-NoActivation-x64
+          path: package
+          if-no-files-found: error
