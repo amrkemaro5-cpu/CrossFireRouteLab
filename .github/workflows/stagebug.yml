@@ -3,6 +3,8 @@ name: Build StageBug Windows x64
 on:
   push:
     branches: [ stagebug-reconstruction ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
