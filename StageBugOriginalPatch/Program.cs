@@ -35,6 +35,7 @@ internal static class Native
 
 internal static class Program
 {
+    private const nuint ExpectedImageSize = 0x7A9F000;
     private const nuint GateRva = 0x8FDF;
 
     private static readonly byte[] Expected =
@@ -43,7 +44,8 @@ internal static class Program
         0x0F, 0x84, 0x95, 0x3C, 0x00, 0x00
     };
 
-    // Keep the original success continuation and remove only the call/result branch.
+    // Keep the original post-authentication continuation. The only behavioral change
+    // is to mark the authenticated state as active and skip the activation UI/result call.
     private static readonly byte[] Patched =
     {
         0xC6, 0x86, 0x88, 0x00, 0x00, 0x00, 0x01,
@@ -84,17 +86,19 @@ internal static class Program
         {
             Thread.Sleep(100);
 
-            foreach (Process p in Process.GetProcessesByName("EpicWebHelper"))
+            foreach (Process p in Process.GetProcesses())
             {
                 try
                 {
-                    if (p.StartTime.ToUniversalTime() < launchUtc.AddSeconds(-3))
+                    if (p.HasExited || p.StartTime.ToUniversalTime() < launchUtc.AddSeconds(-3))
                         continue;
                     if (p.MainModule is null)
                         continue;
 
-                    string module = p.MainModule.FileName;
-                    if (!module.EndsWith("EpicWebHelper.exe", StringComparison.OrdinalIgnoreCase))
+                    // Do not rely on a process filename. The dump shows that the original
+                    // image can be resident under the runtime name EpicWebHelper.exe.
+                    // The loaded image size is a stronger build identifier.
+                    if ((nuint)p.MainModule.ModuleMemorySize < ExpectedImageSize)
                         continue;
 
                     if (TryPatch(p))
@@ -102,7 +106,7 @@ internal static class Program
                 }
                 catch
                 {
-                    // The runtime may be transitioning while its image is being unpacked/loaded.
+                    // Processes can disappear or change modules while startup is unpacking.
                 }
                 finally
                 {
@@ -145,7 +149,8 @@ internal static class Program
             if (current.SequenceEqual(Patched))
                 return true;
 
-            // Safety guard: never patch an unexpected runtime build.
+            // Safety guard: never modify a runtime that does not contain the exact
+            // recovered instruction sequence from the supplied StageBug dump.
             if (!current.SequenceEqual(Expected))
                 return false;
 
