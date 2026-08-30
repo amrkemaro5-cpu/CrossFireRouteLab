@@ -1,5 +1,5 @@
 <Project>
-  <PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'StageBug' and '$(MSBuildProjectName)' != 'StageBugOriginalPatch'">
     <StartupObject>CrossFireRouteLab.Program</StartupObject>
   </PropertyGroup>
 </Project>
