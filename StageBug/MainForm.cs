@@ -182,7 +182,7 @@ public sealed class MainForm : Form
         initialize.Enabled = controller.State != StageBugSessionState.Boost2Applied;
         boost1.Enabled = controller.State == StageBugSessionState.Initialized;
         boost2.Enabled = controller.State == StageBugSessionState.Boost1Applied;
-        createRoom.Enabled = sessionReady && roomController.State is RoomState.None or RoomState.Closed;
+        createRoom.Enabled = sessionReady && (roomController.State is RoomState.None or RoomState.Closed);
         restoreRoom.Enabled = roomController.State is RoomState.Restored or RoomState.Closed or RoomState.None;
         leaveRoom.Enabled = roomController.State is RoomState.Active or RoomState.Restored or RoomState.Creating;
     }
