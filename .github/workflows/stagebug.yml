@@ -1,0 +1,58 @@
+name: Build StageBug Windows x64
+
+on:
+  push:
+    branches: [ stagebug-reconstruction ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore StageBug/StageBug.csproj
+
+      - name: Build with warnings treated as errors
+        run: dotnet build StageBug/StageBug.csproj -c Release --no-restore -warnaserror
+
+      - name: Source safety checks
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem StageBug -Filter *.cs -Recurse | ForEach-Object { Get-Content $_.FullName -Raw }
+          $source = $files -join "`n"
+          foreach ($forbidden in @('601E-D8EF-FC48-3467', 'p_encrypted_payload', 'secure_create_room_v4', 'secure_join_room_v4', 'WriteProcessMemory', 'CreateRemoteThread')) {
+            if ($source.Contains($forbidden)) { throw "Forbidden recovered/protected material or process-injection primitive found: $forbidden" }
+          }
+          foreach ($required in @('INITIALIZE SESSION', 'TRIGGER BOOST 1', 'TRIGGER BOOST 2')) {
+            if (-not $source.Contains($required)) { throw "Required control missing: $required" }
+          }
+          Write-Host 'StageBug source safety checks passed.'
+
+      - name: Publish Windows x64
+        run: dotnet publish StageBug/StageBug.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o publish
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item publish\StageBug.exe package\StageBug.exe -Force
+          Copy-Item StageBug\README.md package\README.md -Force
+          Get-FileHash package\StageBug.exe -Algorithm SHA256 | Format-List
+
+      - name: Upload StageBug artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: StageBug-Windows-x64
+          path: package
+          if-no-files-found: error
