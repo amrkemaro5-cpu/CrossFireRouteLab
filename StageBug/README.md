@@ -1,28 +1,28 @@
 # StageBug reconstruction
 
-This directory is the source-controlled reconstruction workspace for the user's StageBug application.
+This directory is the standalone source-controlled reconstruction workspace for the supplied StageBug application.
 
-## Scope
+## Included
 
-The current target is intentionally limited to the three controls the user requested:
+- `Program.cs` — Windows Forms entry point.
+- `MainForm.cs` — reconstructed control surface for session, Boost, and room state.
+- `SessionController.cs` — local session state machine and CrossFire observation integration.
+- `CrossFireObserver.cs` — non-invasive Windows process/window/module observation.
+- `RoomState.cs` — local active-room state and JSON persistence.
+- `StageBugDiagnostics.cs` — local diagnostic logging under `%LOCALAPPDATA%\\StageBug\\stagebug.log`.
+- `FORENSIC_STATUS_2026-08-30.md` — evidence-derived reconstruction notes.
 
-1. `INITIALIZE SESSION`
-2. `TRIGGER BOOST 1`
-3. `TRIGGER BOOST 2`
+## Verified local state model
 
-`CREATE A ROOM` is out of scope for this iteration.
+`Idle` -> `CrossFireDetected` -> `Initialized` -> `Boost1Applied` -> `Boost2Applied`.
 
-The original executable is kept outside this source tree. The prior investigation established evidence of a native Windows UI, SunnyNet integration, CrossFire process/session integration, and a native `sos::network::RoomManager`.
+Boost 2 is intentionally unavailable until Boost 1 has completed. CrossFire instance changes reset the local session state.
 
-## Current implementation
+## Important architecture gap
 
-- Native Windows Forms shell targeting Windows x64.
-- CrossFire process detection using the Windows process API.
-- Explicit local session state: `Idle` -> `CrossFireDetected` -> `Initialized`.
-- `INITIALIZE SESSION` validates that CrossFire is running and records the detected PID locally.
-- Boost buttons require an initialized local session and re-check that CrossFire is still running.
-- No recovered license keys, credentials, encrypted authorization payloads, or process-injection primitives are embedded.
-- The reconstructed boost controls do not claim to reproduce protected server-side effects that have not been independently recovered and authorized.
+The supplied runtime evidence shows that the original StageBug also used a native SunnyNet/SvcData layer, multiple readiness signals (`engine_ready`, `client_game_ready`, `step1_sub_ready`), native RoomManager callbacks, and protected server-side operations. Those components are **not present in this standalone reconstruction** and are therefore not claimed to be reproduced.
+
+The reconstruction does not embed recovered credentials, signing keys, encrypted authorization payloads, process-memory patching, or anti-tamper bypasses.
 
 ## Build
 
@@ -32,8 +32,8 @@ dotnet build StageBug/StageBug.csproj -c Release -warnaserror
 dotnet publish StageBug/StageBug.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
 ```
 
-GitHub Actions builds a Windows x64 artifact on pushes to `stagebug-reconstruction` and runs source-safety checks before publishing.
+GitHub Actions builds the `StageBug` project for Windows x64 on pushes to `stagebug-reconstruction`.
 
 ## Verification standard
 
-A build is considered technically verified only when the Windows CI job completes successfully. Functional equivalence to the original StageBug still requires Windows-side testing against the original application's observable behavior.
+A green CI build verifies compilation and packaging only. Functional equivalence to the supplied StageBug application requires Windows-side testing against the original observable behavior and the missing native integration components.
