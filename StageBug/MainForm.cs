@@ -23,9 +23,9 @@ public sealed class MainForm : Form
     public MainForm()
     {
         Text = "StageBug";
-        ClientSize = new Size(360, 500);
-        MinimumSize = new Size(360, 500);
-        MaximumSize = new Size(360, 500);
+        ClientSize = new Size(380, 520);
+        MinimumSize = new Size(380, 520);
+        MaximumSize = new Size(380, 520);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -190,13 +190,17 @@ public sealed class MainForm : Form
     private void UpdateGameState()
     {
         var found = controller.RefreshCrossFire();
-        game.Text = found
-            ? $"CrossFire: detected (PID {controller.CrossFireProcessId})"
-            : "CrossFire: not detected";
-
-        session.Text = !found
-            ? "Session: idle"
-            : controller.State switch
+        if (!found)
+        {
+            game.Text = "CrossFire: not detected";
+            session.Text = "Session: idle";
+        }
+        else
+        {
+            var title = controller.Observation.MainWindowTitle;
+            var readiness = controller.ClientWindowReady ? "window ready" : "window not ready";
+            game.Text = $"CrossFire: detected (PID {controller.CrossFireProcessId}; {readiness})";
+            session.Text = controller.State switch
             {
                 StageBugSessionState.CrossFireDetected => "Session: CrossFire detected",
                 StageBugSessionState.Initialized => "Session: initialized",
@@ -204,6 +208,10 @@ public sealed class MainForm : Form
                 StageBugSessionState.Boost2Applied => "Session: Boost 2 applied",
                 _ => "Session: idle"
             };
+
+            if (!string.IsNullOrWhiteSpace(title))
+                StageBugDiagnostics.Info($"CrossFire window: {title}");
+        }
 
         UpdateControlState();
         UpdateRoomState();
