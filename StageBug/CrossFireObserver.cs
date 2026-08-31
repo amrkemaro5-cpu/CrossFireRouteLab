@@ -9,8 +9,15 @@ public sealed record CrossFireObservation(
     string? ProcessName,
     string? MainWindowTitle,
     bool MainWindowReady,
+    bool ModuleInspectionSucceeded,
     IReadOnlyList<string> Modules,
-    DateTimeOffset ObservedAt);
+    DateTimeOffset ObservedAt)
+{
+    public bool ClientIdentified =>
+        ProcessDetected &&
+        !string.IsNullOrWhiteSpace(ExecutablePath) &&
+        !string.IsNullOrWhiteSpace(ProcessName);
+}
 
 public sealed class CrossFireObserver
 {
@@ -28,39 +35,51 @@ public sealed class CrossFireObserver
             process = FindCandidateProcess();
             if (process is null)
             {
-                return new CrossFireObservation(
-                    false, null, null, null, null, false,
-                    Array.Empty<string>(), DateTimeOffset.Now);
+                return EmptyObservation();
             }
 
-            var modules = GetModuleNames(process);
             string? executablePath = TryGetExecutablePath(process);
+            string? processName = TryGetProcessName(process);
             string? windowTitle = TryGetMainWindowTitle(process);
             bool windowReady = process.MainWindowHandle != IntPtr.Zero &&
-                              !string.IsNullOrWhiteSpace(windowTitle);
+                               !string.IsNullOrWhiteSpace(windowTitle);
 
-            return new CrossFireObservation(
+            var moduleResult = GetModuleNames(process);
+
+            var observation = new CrossFireObservation(
                 true,
                 process.Id,
                 executablePath,
-                process.ProcessName,
+                processName,
                 windowTitle,
                 windowReady,
-                modules,
+                moduleResult.Succeeded,
+                moduleResult.Modules,
                 DateTimeOffset.Now);
+
+            StageBugDiagnostics.Info(
+                $"CrossFire observation: pid={observation.ProcessId}, " +
+                $"identified={observation.ClientIdentified}, " +
+                $"windowReady={observation.MainWindowReady}, " +
+                $"moduleInspection={observation.ModuleInspectionSucceeded}, " +
+                $"modules={observation.Modules.Count}");
+
+            return observation;
         }
         catch (Exception ex)
         {
             StageBugDiagnostics.Warning($"CrossFire observation failed: {ex.GetType().Name}: {ex.Message}");
-            return new CrossFireObservation(
-                false, null, null, null, null, false,
-                Array.Empty<string>(), DateTimeOffset.Now);
+            return EmptyObservation();
         }
         finally
         {
             process?.Dispose();
         }
     }
+
+    private static CrossFireObservation EmptyObservation() => new(
+        false, null, null, null, null, false, false,
+        Array.Empty<string>(), DateTimeOffset.Now);
 
     private static Process? FindCandidateProcess()
     {
@@ -94,6 +113,19 @@ public sealed class CrossFireObserver
         {
             return process.MainModule?.FileName;
         }
+        catch (Exception ex)
+        {
+            StageBugDiagnostics.Warning($"CrossFire executable path unavailable: {ex.GetType().Name}");
+            return null;
+        }
+    }
+
+    private static string? TryGetProcessName(Process process)
+    {
+        try
+        {
+            return process.ProcessName;
+        }
         catch
         {
             return null;
@@ -112,21 +144,24 @@ public sealed class CrossFireObserver
         }
     }
 
-    private static IReadOnlyList<string> GetModuleNames(Process process)
+    private static (bool Succeeded, IReadOnlyList<string> Modules) GetModuleNames(Process process)
     {
         try
         {
-            return process.Modules
+            var modules = process.Modules
                 .Cast<ProcessModule>()
                 .Select(m => m.ModuleName)
                 .Where(n => !string.IsNullOrWhiteSpace(n))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+            return (true, modules);
         }
-        catch
+        catch (Exception ex)
         {
-            return Array.Empty<string>();
+            StageBugDiagnostics.Warning($"CrossFire module inspection unavailable: {ex.GetType().Name}: {ex.Message}");
+            return (false, Array.Empty<string>());
         }
     }
 }
