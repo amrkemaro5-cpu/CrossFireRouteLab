@@ -7,7 +7,7 @@ This directory is the standalone source-controlled reconstruction workspace for 
 - `Program.cs` — Windows Forms entry point.
 - `MainForm.cs` — reconstructed control surface for session, Boost, and room state.
 - `SessionController.cs` — local session state machine and CrossFire observation integration.
-- `CrossFireObserver.cs` — non-invasive Windows process/window/module observation.
+- `CrossFireObserver.cs` — non-invasive Windows process/window/module observation with explicit identification and module-inspection state.
 - `RoomState.cs` — local active-room state and JSON persistence.
 - `StageBugDiagnostics.cs` — local diagnostic logging under `%LOCALAPPDATA%\\StageBug\\stagebug.log`.
 - `FORENSIC_STATUS_2026-08-30.md` — evidence-derived reconstruction notes.
@@ -16,7 +16,7 @@ This directory is the standalone source-controlled reconstruction workspace for 
 
 `Idle` -> `CrossFireDetected` -> `Initialized` -> `Boost1Applied` -> `Boost2Applied`.
 
-Boost 2 is intentionally unavailable until Boost 1 has completed. CrossFire instance changes reset the local session state.
+Initialization requires a detected CrossFire process, readable executable identity, and a ready main window. CrossFire instance changes reset the local session state. Boost 2 is intentionally unavailable until Boost 1 has completed.
 
 ## Verification note
 
