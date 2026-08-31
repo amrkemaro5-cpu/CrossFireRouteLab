@@ -15,10 +15,13 @@ public sealed class SessionController
 
     public StageBugSessionState State { get; private set; } = StageBugSessionState.Idle;
     public CrossFireObservation Observation { get; private set; } = new(
-        false, null, null, null, null, false, Array.Empty<string>(), DateTimeOffset.Now);
+        false, null, null, null, null, false, false,
+        Array.Empty<string>(), DateTimeOffset.Now);
     public int? CrossFireProcessId => Observation.ProcessId;
-    public bool ClientIdentified => Observation.ProcessDetected && !string.IsNullOrWhiteSpace(Observation.ExecutablePath);
+    public bool ClientIdentified => Observation.ClientIdentified;
     public bool ClientWindowReady => Observation.MainWindowReady;
+    public bool ModuleInspectionSucceeded => Observation.ModuleInspectionSucceeded;
+    public IReadOnlyList<string> ObservedModules => Observation.Modules;
     public DateTimeOffset? InitializedAt { get; private set; }
     public DateTimeOffset? Boost1AppliedAt { get; private set; }
     public DateTimeOffset? Boost2AppliedAt { get; private set; }
@@ -41,7 +44,9 @@ public sealed class SessionController
         {
             State = StageBugSessionState.CrossFireDetected;
             StageBugDiagnostics.Info(
-                $"State -> {State}; PID={CrossFireProcessId}; windowReady={ClientWindowReady}");
+                $"State -> {State}; PID={CrossFireProcessId}; " +
+                $"identified={ClientIdentified}; windowReady={ClientWindowReady}; " +
+                $"moduleInspection={ModuleInspectionSucceeded}");
         }
 
         return true;
