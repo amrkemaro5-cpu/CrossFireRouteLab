@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace StageBug;
 
 public enum StageBugSessionState
@@ -13,34 +11,38 @@ public enum StageBugSessionState
 
 public sealed class SessionController
 {
+    private readonly CrossFireObserver observer = new();
+
     public StageBugSessionState State { get; private set; } = StageBugSessionState.Idle;
-    public int? CrossFireProcessId { get; private set; }
+    public CrossFireObservation Observation { get; private set; } = new(
+        false, null, null, null, null, false, Array.Empty<string>(), DateTimeOffset.Now);
+    public int? CrossFireProcessId => Observation.ProcessId;
+    public bool ClientIdentified => Observation.ProcessDetected && !string.IsNullOrWhiteSpace(Observation.ExecutablePath);
+    public bool ClientWindowReady => Observation.MainWindowReady;
     public DateTimeOffset? InitializedAt { get; private set; }
     public DateTimeOffset? Boost1AppliedAt { get; private set; }
     public DateTimeOffset? Boost2AppliedAt { get; private set; }
 
     public bool RefreshCrossFire()
     {
-        var process = Process.GetProcessesByName("crossfire").FirstOrDefault();
-        var newPid = process?.Id;
+        var previousPid = CrossFireProcessId;
+        Observation = observer.Observe();
 
-        if (newPid is null)
+        if (!Observation.ProcessDetected)
         {
             CrossFireProcessId = null;
             ResetState("CrossFire process disappeared");
             return false;
         }
 
-        if (CrossFireProcessId.HasValue && CrossFireProcessId.Value != newPid.Value)
-        {
-            ResetState($"CrossFire instance changed: {CrossFireProcessId.Value} -> {newPid.Value}");
-        }
+        if (previousPid.HasValue && Observation.ProcessId.HasValue && previousPid.Value != Observation.ProcessId.Value)
+            ResetState($"CrossFire instance changed: {previousPid.Value} -> {Observation.ProcessId.Value}");
 
-        CrossFireProcessId = newPid;
         if (State == StageBugSessionState.Idle)
         {
             State = StageBugSessionState.CrossFireDetected;
-            StageBugDiagnostics.Info($"State -> {State}; PID={CrossFireProcessId}");
+            StageBugDiagnostics.Info(
+                $"State -> {State}; PID={CrossFireProcessId}; windowReady={ClientWindowReady}");
         }
 
         return true;
@@ -55,11 +57,20 @@ public sealed class SessionController
             return false;
         }
 
+        if (!ClientIdentified)
+        {
+            message = "CrossFire was found, but its executable identity could not be read.";
+            StageBugDiagnostics.Warning(message);
+            return false;
+        }
+
         State = StageBugSessionState.Initialized;
         InitializedAt = DateTimeOffset.Now;
         Boost1AppliedAt = null;
         Boost2AppliedAt = null;
-        message = $"Session ready for CrossFire PID {CrossFireProcessId}.";
+        message = ClientWindowReady
+            ? $"Session ready for CrossFire PID {CrossFireProcessId}."
+            : $"CrossFire PID {CrossFireProcessId} identified; main window is not ready yet.";
         StageBugDiagnostics.Info(message);
         return true;
     }
