@@ -30,7 +30,6 @@ public sealed class SessionController
 
         if (!Observation.ProcessDetected)
         {
-            CrossFireProcessId = null;
             ResetState("CrossFire process disappeared");
             return false;
         }
@@ -64,13 +63,18 @@ public sealed class SessionController
             return false;
         }
 
+        if (!ClientWindowReady)
+        {
+            message = "CrossFire is running, but its main window is not ready yet.";
+            StageBugDiagnostics.Warning(message);
+            return false;
+        }
+
         State = StageBugSessionState.Initialized;
         InitializedAt = DateTimeOffset.Now;
         Boost1AppliedAt = null;
         Boost2AppliedAt = null;
-        message = ClientWindowReady
-            ? $"Session ready for CrossFire PID {CrossFireProcessId}."
-            : $"CrossFire PID {CrossFireProcessId} identified; main window is not ready yet.";
+        message = $"Session ready for CrossFire PID {CrossFireProcessId}.";
         StageBugDiagnostics.Info(message);
         return true;
     }
